@@ -1,0 +1,273 @@
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useOutletContext } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import LandingPage from '@userPages/LandingPage.jsx';
+import LoginPage from '@userPages/LoginPage.jsx';
+import RegistrationPage from '@userPages/RegistrationPage.jsx';
+import RegistrationSuccessPage from '@userPages/RegistrationSuccessPage.jsx';
+import PasswordSetupPage from '@userPages/PasswordSetupPage.jsx';
+import DashboardPage from '@userPages/DashboardPage.jsx';
+import DigitalIdPage from '@userPages/DigitalIdPage.jsx';
+import DuesTrackingPage from '@userPages/DuesTrackingPage.jsx';
+import NewsPage from '@userPages/NewsPage.jsx';
+import AccountPage from '@userPages/AccountPage.jsx';
+import BenefitsPage from '@userPages/BenefitsPage.jsx';
+import MembershipFormPage from '@userPages/MembershipFormPage.jsx';
+import AdminLayout from '@adminComponents/AdminLayout.jsx';
+import AdminDashboard from '@adminPages/Dashboard.jsx';
+import MembersTable from '@adminPages/MembersTable.jsx';
+import RegistrationReview from '@adminPages/RegistrationReview.jsx';
+import ProponentQueue from '@adminPages/ProponentQueue.jsx';
+import AdminFinalApprovalQueue from '@adminPages/AdminFinalApprovalQueue.jsx';
+import TicketDetail from '@adminPages/TicketDetail.jsx';
+import ReportsAnalytics from '@adminPages/ReportsAnalytics.jsx';
+import AuditLog from '@adminPages/AuditLog.jsx';
+import AISettings from '@adminPages/AISettings.jsx';
+import BenefitsAssistance from '@adminPages/BenefitsAssistance.jsx';
+import BenefitsAssistanceTriage from '@adminPages/BenefitsAssistanceTriage.jsx';
+import DuesFinance from '@adminPages/DuesFinance.jsx';
+import EventManagement from '@adminPages/EventManagement.jsx';
+import IDCardManagement from '@adminPages/IDCardManagement.jsx';
+import MemberProfile from '@adminPages/MemberProfile.jsx';
+import AdminSettings from '@adminPages/AdminSettings.jsx';
+import { submitMembershipApplication } from './api/auth';
+import { mockUser, mockDues, mockNotifications, mockNews } from './data/mockData';
+
+function Protected({ isAuthenticated, children }) {
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
+}
+
+function AdminDashboardRoute() {
+  const outletContext = useOutletContext();
+  const onNavigate = outletContext?.onNavigate;
+  return <AdminDashboard onNavigate={onNavigate} />;
+}
+
+function App() {
+  const [user, setUser] = useState(null);
+  const [dues] = useState(mockDues);
+  const [notifications] = useState(mockNotifications);
+  const [news] = useState(mockNews);
+
+  const isAuthenticated = Boolean(user);
+
+  const handleLogout = () => {
+    setUser(null);
+  };
+
+  const DashboardRoute = () => (
+    <DashboardPage
+      user={user}
+      dues={dues}
+      notifications={notifications}
+      onLogout={handleLogout}
+    />
+  );
+
+  const DigitalIdRoute = () => <DigitalIdPage user={user} onLogout={handleLogout} />;
+
+  const DuesRoute = () => <DuesTrackingPage user={user} dues={dues} onLogout={handleLogout} />;
+
+  const NewsRoute = () => <NewsPage user={user} news={news} onLogout={handleLogout} />;
+
+  const AccountRoute = () => <AccountPage user={user} onLogout={handleLogout} />;
+
+  const BenefitsRoute = () => <BenefitsPage user={user} onLogout={handleLogout} />;
+
+  const MembershipFormRoute = () => (
+    <MembershipFormPage
+      user={user}
+      onLogout={handleLogout}
+    />
+  );
+
+  const LandingRoute = () => {
+    const navigate = useNavigate();
+    return (
+      <LandingPage
+        onGetStarted={() => navigate('/register')}
+        onLogin={() => navigate('/login')}
+      />
+    );
+  };
+
+  const LoginRoute = () => {
+    const navigate = useNavigate();
+    return (
+      <LoginPage
+        onSubmit={({ identifier }) => {
+          const nextUser = {
+            ...mockUser,
+            email: identifier.includes('@') ? identifier : mockUser.email,
+            phone: identifier.startsWith('+') ? identifier : mockUser.phone,
+          };
+          setUser(nextUser);
+          navigate('/dashboard');
+        }}
+        onBack={() => navigate('/')}
+        onCreateAccount={() => navigate('/register')}
+      />
+    );
+  };
+
+  const RegistrationRoute = () => {
+    const navigate = useNavigate();
+    const [submission, setSubmission] = useState({ loading: false, error: '' });
+
+    const handleSubmit = async (form) => {
+      if (submission.loading) return;
+      setSubmission({ loading: true, error: '' });
+
+      try {
+        const response = await submitMembershipApplication(form);
+        const { id, digitalId } = response.data ?? {};
+        const membershipDate = new Date().toISOString();
+        setUser({
+          ...mockUser,
+          ...form,
+          id: id ?? mockUser.id,
+          digitalId: digitalId ?? mockUser.digitalId,
+          membershipDate,
+          isApproved: false,
+        });
+        setSubmission({ loading: false, error: '' });
+        navigate('/registration-success');
+      } catch (error) {
+        const message = error?.response?.data?.message ?? 'Unable to submit registration. Please try again.';
+        setSubmission({ loading: false, error: message });
+      }
+    };
+
+    return (
+      <RegistrationPage
+        onBack={() => navigate('/')}
+        onSubmit={handleSubmit}
+        submitting={submission.loading}
+        submitError={submission.error}
+      />
+    );
+  };
+
+  const RegistrationSuccessRoute = () => {
+    const navigate = useNavigate();
+    return (
+      <RegistrationSuccessPage
+        onContinue={() => {
+          if (user) {
+            navigate('/dashboard');
+          } else {
+            navigate('/login');
+          }
+        }}
+      />
+    );
+  };
+
+  const PasswordSetupRoute = () => {
+    const navigate = useNavigate();
+    const email = user?.email ?? mockUser.email;
+    return (
+      <PasswordSetupPage
+        email={email}
+        onSubmit={() => navigate('/dashboard')}
+        onCancel={() => navigate('/login')}
+      />
+    );
+  };
+
+  const defaultRoute = useMemo(() => (isAuthenticated ? '/dashboard' : '/'), [isAuthenticated]);
+
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<LandingRoute />} />
+        <Route path="/login" element={<LoginRoute />} />
+        <Route path="/register" element={<RegistrationRoute />} />
+        <Route path="/registration-success" element={<RegistrationSuccessRoute />} />
+        <Route path="/password-setup" element={<PasswordSetupRoute />} />
+        <Route
+          path="/dashboard"
+          element={(
+            <Protected isAuthenticated={isAuthenticated}>
+              <DashboardRoute />
+            </Protected>
+          )}
+        />
+        <Route
+          path="/digital-id"
+          element={(
+            <Protected isAuthenticated={isAuthenticated}>
+              <DigitalIdRoute />
+            </Protected>
+          )}
+        />
+        <Route
+          path="/dues"
+          element={(
+            <Protected isAuthenticated={isAuthenticated}>
+              <DuesRoute />
+            </Protected>
+          )}
+        />
+        <Route
+          path="/news"
+          element={(
+            <Protected isAuthenticated={isAuthenticated}>
+              <NewsRoute />
+            </Protected>
+          )}
+        />
+        <Route
+          path="/account"
+          element={(
+            <Protected isAuthenticated={isAuthenticated}>
+              <AccountRoute />
+            </Protected>
+          )}
+        />
+        <Route
+          path="/benefits"
+          element={(
+            <Protected isAuthenticated={isAuthenticated}>
+              <BenefitsRoute />
+            </Protected>
+          )}
+        />
+        <Route
+          path="/membership-form"
+          element={(
+            <Protected isAuthenticated={isAuthenticated}>
+              <MembershipFormRoute />
+            </Protected>
+          )}
+        />
+        <Route path="/admin" element={<AdminLayout />}>
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<AdminDashboardRoute />} />
+          <Route path="members" element={<MembersTable />} />
+          <Route path="members/:memberId" element={<MemberProfile />} />
+          <Route path="registration-review" element={<RegistrationReview />} />
+          <Route path="proponent-queue" element={<ProponentQueue />} />
+          <Route path="final-approval-queue" element={<AdminFinalApprovalQueue />} />
+          <Route path="ticket-detail" element={<TicketDetail />} />
+          <Route path="reports-analytics" element={<ReportsAnalytics />} />
+          <Route path="audit-log" element={<AuditLog />} />
+          <Route path="ai-settings" element={<AISettings />} />
+          <Route path="benefits-assistance" element={<BenefitsAssistance />} />
+          <Route path="benefits-triage" element={<BenefitsAssistanceTriage />} />
+          <Route path="dues-finance" element={<DuesFinance />} />
+          <Route path="event-management" element={<EventManagement />} />
+          <Route path="id-card-management" element={<IDCardManagement />} />
+          <Route path="admin-settings" element={<AdminSettings />} />
+          <Route path="*" element={<Navigate to="dashboard" replace />} />
+        </Route>
+        <Route path="*" element={<Navigate to={defaultRoute} replace />} />
+      </Routes>
+    </Router>
+  );
+}
+
+export default App;

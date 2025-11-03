@@ -1,0 +1,58 @@
+.benefits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.benefits__card {
+  background: #fff;
+  border-radius: 20px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  padding: 24px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  align-items: center;
+  box-shadow: var(--shadow-md);
+}
+
+.benefits__icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--color-primary);
+  display: grid;
+  place-items: center;
+}
+
+.benefits__content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.benefits__content header span {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.benefits__content header h2 {
+  margin: 6px 0 0;
+}
+
+.benefits__content p {
+  margin: 0;
+  color: var(--color-text-muted);
+  line-height: 1.6;
+}
+
+.benefits__content .button {
+  align-self: flex-start;
+}

@@ -1,0 +1,646 @@
+.digital-id-page {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.digital-id-page__hero {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 20px;
+  padding: 24px 28px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, #1e293b, #111827);
+  color: #f8fafc;
+}
+
+.digital-id-page__hero h1 {
+  margin: 0 0 6px;
+  font-size: 1.6rem;
+}
+
+.digital-id-page__hero p {
+  margin: 0;
+  color: rgba(226, 232, 240, 0.75);
+  font-size: 0.95rem;
+}
+
+.digital-id-page__hero-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  background: rgba(59, 130, 246, 0.18);
+  color: #bfdbfe;
+}
+
+.digital-id-page__hero button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.55);
+  color: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.digital-id-page__hero button:hover {
+  transform: translateY(-2px);
+  border-color: rgba(148, 163, 184, 0.6);
+}
+
+.digital-id-page__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.digital-id-card {
+  perspective: 1600px;
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  padding: 0 12px;
+}
+
+.digital-id-card__inner {
+  position: relative;
+  width: min(380px, 100%);
+  aspect-ratio: 2 / 3.35;
+  min-height: 520px;
+  transform-style: preserve-3d;
+  transition: transform 0.6s ease;
+}
+
+.digital-id-card--flipped .digital-id-card__inner {
+  transform: rotateY(180deg);
+}
+
+.digital-id-card__face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  background: #ffffff;
+  border-radius: 28px;
+  overflow: hidden;
+  box-shadow: 0 40px 80px rgba(15, 23, 42, 0.15);
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  display: flex;
+  flex-direction: column;
+}
+
+.digital-id-card__face--back {
+  transform: rotateY(180deg);
+}
+
+.digital-id-card__header {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 24px 22px 20px;
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+  color: #f8fafc;
+  position: relative;
+}
+
+.digital-id-card__header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Ctext x='18' y='30' fill='rgba(248,250,252,0.16)' font-size='18' font-family='Arial, sans-serif' font-weight='700'%3EALU%3C/text%3E%3Ctext x='18' y='58' fill='rgba(248,250,252,0.14)' font-size='16' font-family='Arial, sans-serif' font-weight='600'%3ETUCP%3C/text%3E%3Ctext x='18' y='84' fill='rgba(248,250,252,0.12)' font-size='12' font-family='Arial, sans-serif' font-weight='600'%3E1954%3C/text%3E%3C/svg%3E");
+  background-repeat: repeat;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.digital-id-card__header::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle at 20% 20%, rgba(248, 250, 252, 0.12) 0%, transparent 55%);
+  pointer-events: none;
+}
+
+.digital-id-card__header p {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.digital-id-card__header span {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: rgba(248, 250, 252, 0.8);
+}
+
+.digital-id-card__seal {
+  width: 74px;
+  height: 74px;
+  border-radius: 24px;
+  background: rgba(15, 23, 42, 0.85);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  color: #facc15;
+  line-height: 1.1;
+  text-align: center;
+  padding: 8px;
+  box-shadow: inset 0 0 0 2px rgba(248, 250, 252, 0.18);
+}
+
+.digital-id-card__seal span {
+  display: block;
+  font-size: 1.1rem;
+  letter-spacing: 0.08em;
+}
+
+.digital-id-card__seal small {
+  display: block;
+  color: #f8fafc;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+}
+
+.digital-id-card__member-banner {
+  text-align: center;
+  background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
+  color: #f8fafc;
+  letter-spacing: 0.32em;
+  padding: 12px 0;
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
+.digital-id-card__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 24px 24px 18px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.04) 0%, rgba(15, 23, 42, 0.01) 100%);
+  position: relative;
+}
+
+.digital-id-card__body::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Ctext x='10' y='30' fill='rgba(79,70,229,0.08)' font-size='22' font-family='Arial, sans-serif' font-weight='700'%3EALU%3C/text%3E%3Ctext x='10' y='60' fill='rgba(79,70,229,0.08)' font-size='14' font-family='Arial, sans-serif' font-weight='600'%3EOFFICIAL%3C/text%3E%3Ctext x='10' y='86' fill='rgba(15,23,42,0.08)' font-size='12' font-family='Arial, sans-serif' font-weight='600'%3EMEMBER%3C/text%3E%3C/svg%3E");
+  background-repeat: repeat;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.digital-id-card__body > * {
+  position: relative;
+  z-index: 1;
+}
+
+.digital-id-card__photo {
+  background: #f8fafc;
+  border: 2px solid rgba(15, 23, 42, 0.12);
+  border-radius: 16px;
+  width: 148px;
+  height: 180px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  position: relative;
+}
+
+.digital-id-card__photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.digital-id-card__initials {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  color: #f8fafc;
+  display: grid;
+  place-items: center;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+
+.digital-id-card__info {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+  text-align: center;
+  width: 100%;
+}
+
+.digital-id-card__info-row span {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #1f2937;
+}
+
+
+.digital-id-card__info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.95rem;
+  color: rgba(15, 23, 42, 0.7);
+  width: 100%;
+}
+
+
+.digital-id-card__info-row strong {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 1rem;
+}
+
+
+.digital-id-card__info h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  letter-spacing: 0.1em;
+  color: #0f172a;
+}
+
+
+.digital-id-card__meta {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+
+.digital-id-card__meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.digital-id-card__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(22, 163, 74, 0.12);
+  color: #16a34a;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+}
+
+.digital-id-card__status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.15);
+}
+
+.digital-id-card__signature {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid rgba(15, 23, 42, 0.6);
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: rgba(15, 23, 42, 0.7);
+}
+
+.digital-id-card__header--back {
+  background: linear-gradient(135deg, #c2410c, #b91c1c);
+}
+
+.digital-id-card__qr {
+  flex: 1;
+  padding: 28px 24px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  align-items: center;
+  justify-content: center;
+}
+
+.digital-id-card__qr-box {
+  padding: 16px;
+  border-radius: 18px;
+  border: 2px solid rgba(15, 23, 42, 0.12);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.02), rgba(15, 23, 42, 0.08));
+  display: grid;
+  place-items: center;
+}
+
+.digital-id-card__qr-box img,
+.digital-id-card__qr-box svg {
+  width: 150px;
+  height: 150px;
+  object-fit: contain;
+}
+
+.digital-id-card__qr-info {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: #1e293b;
+}
+
+.digital-id-card__qr-info strong {
+  font-size: 1.05rem;
+}
+
+.digital-id-card__qr-info span {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.95rem;
+}
+
+.digital-id-card__qr-info small {
+  color: #475569;
+  font-size: 0.8rem;
+}
+
+.digital-id-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 22px;
+  background: linear-gradient(135deg, #1e3a8a, #1d4ed8);
+  color: #f8fafc;
+  font-size: 0.82rem;
+  letter-spacing: 0.05em;
+}
+
+.digital-id-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.digital-id-sidebar__card {
+  background: #ffffff;
+  border-radius: 20px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  padding: 24px;
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.digital-id-sidebar__card h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #0f172a;
+}
+
+.digital-id-sidebar__card p {
+  margin: 0;
+  color: #475569;
+  font-size: 0.95rem;
+}
+
+.digital-id-sidebar__actions {
+  display: grid;
+  gap: 12px;
+}
+
+.digital-id-sidebar__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(248, 250, 252, 0.9);
+  color: #0f172a;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.digital-id-sidebar__action:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.1);
+}
+
+.digital-id-sidebar__card ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+  color: #475569;
+  font-size: 0.95rem;
+}
+
+.digital-id-sidebar__card li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 10px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 6px;
+}
+
+.dot--blue {
+  background: #3b82f6;
+}
+
+.dot--green {
+  background: #22c55e;
+}
+
+.dot--purple {
+  background: #8b5cf6;
+}
+
+.dot--orange {
+  background: #f97316;
+}
+
+.digital-id-sidebar__cta {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  border-radius: 20px;
+  border: 1px dashed rgba(59, 130, 246, 0.6);
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+}
+
+.digital-id-sidebar__cta h4 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+}
+
+.digital-id-sidebar__cta p {
+  margin: 0;
+  color: #2563eb;
+  font-size: 0.95rem;
+}
+
+.digital-id-sidebar__cta button {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  color: #f8fafc;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.digital-id-sidebar__cta button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(59, 130, 246, 0.25);
+}
+
+.digital-id-pending {
+  display: grid;
+  gap: 20px;
+  justify-items: center;
+  text-align: center;
+  padding: 48px 32px;
+  border-radius: 28px;
+  background: #ffffff;
+  border: 1px solid rgba(234, 179, 8, 0.25);
+  box-shadow: 0 32px 64px rgba(120, 53, 15, 0.12);
+}
+
+.digital-id-pending__icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 24px;
+  display: grid;
+  place-items: center;
+  background: rgba(250, 204, 21, 0.15);
+  color: #ca8a04;
+}
+
+.digital-id-pending h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #92400e;
+}
+
+.digital-id-pending p {
+  margin: 0;
+  color: #b45309;
+  max-width: 520px;
+}
+
+.digital-id-pending__status {
+  display: grid;
+  gap: 8px;
+  padding: 20px;
+  border-radius: 16px;
+  background: rgba(254, 240, 138, 0.4);
+  border: 1px solid rgba(250, 204, 21, 0.4);
+  color: #92400e;
+}
+
+.digital-id-pending__status span {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.75rem;
+}
+
+.digital-id-pending__status strong {
+  font-size: 1.1rem;
+}
+
+.digital-id-pending__status small {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.digital-id-pending__actions {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  max-width: 360px;
+}
+
+.digital-id-pending__actions .button {
+  width: 100%;
+}
+
+@media (max-width: 1200px) {
+  .digital-id-card__inner {
+    height: 500px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .digital-id-page__layout {
+    grid-template-columns: 1fr;
+  }
+
+  .digital-id-sidebar__cta {
+    align-items: center;
+    text-align: center;
+  }
+
+  .digital-id-sidebar__cta button {
+    align-self: center;
+  }
+}
+
+@media (max-width: 768px) {
+  .digital-id-page__hero {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+
+  .digital-id-page__hero button {
+    justify-self: center;
+  }
+
+  .digital-id-card__body {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+
+  .digital-id-card__info {
+    align-items: center;
+  }
+
+  .digital-id-card__info-row {
+    width: 100%;
+  }
+
+  .digital-id-card__status {
+    justify-content: center;
+  }
+}
