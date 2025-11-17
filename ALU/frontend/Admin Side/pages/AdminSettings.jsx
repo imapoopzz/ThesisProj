@@ -1,19 +1,269 @@
-import { useEffect, useMemo, useState } from "react";
-import { Check, Shield, Bell, Database, Save, Loader2, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  Shield,
+  Bell,
+  Save,
+  Loader2,
+  RefreshCw,
+  Plus,
+  Trash2,
+  Edit,
+  X,
+} from "lucide-react";
 import "../styles/admin-base.css";
 
 import client from "../../src/api/client";
+
+const ADMIN_STATUS_OPTIONS = ["active", "invited", "suspended", "disabled"];
+
+const SESSION_TIMEOUT_OPTIONS = [
+  { value: 15, label: "15 minutes" },
+  { value: 30, label: "30 minutes" },
+  { value: 60, label: "1 hour" },
+  { value: 120, label: "2 hours" },
+];
+
+const LOGIN_ATTEMPT_OPTIONS = [
+  { value: 3, label: "3 attempts" },
+  { value: 5, label: "5 attempts" },
+  { value: 8, label: "8 attempts" },
+  { value: 10, label: "10 attempts" },
+];
+
+const buildSecurityDefaults = () => ({
+  requireTwoFactor: true,
+  sessionTimeoutMinutes: 30,
+  loginAttemptLimit: 5,
+  auditLoggingEnabled: true,
+});
+
+const normalizeSecurityControls = (payload = {}) => {
+  const defaults = buildSecurityDefaults();
+  const parsedTimeout = Number(payload.sessionTimeoutMinutes);
+  const parsedAttempts = Number(payload.loginAttemptLimit);
+  return {
+    requireTwoFactor: payload.requireTwoFactor !== undefined
+      ? Boolean(payload.requireTwoFactor)
+      : defaults.requireTwoFactor,
+    sessionTimeoutMinutes: Number.isFinite(parsedTimeout) && parsedTimeout > 0
+      ? parsedTimeout
+      : defaults.sessionTimeoutMinutes,
+    loginAttemptLimit: Number.isFinite(parsedAttempts) && parsedAttempts > 0
+      ? parsedAttempts
+      : defaults.loginAttemptLimit,
+    auditLoggingEnabled: payload.auditLoggingEnabled !== undefined
+      ? Boolean(payload.auditLoggingEnabled)
+      : defaults.auditLoggingEnabled,
+  };
+};
+
+const buildAdminFormDefaults = () => ({
+  email: "",
+  firstName: "",
+  lastName: "",
+  password: "",
+  status: "invited",
+  roles: [],
+});
 
 export default function AdminSettings() {
   const [systemSettings, setSystemSettings] = useState({});
   const [roles, setRoles] = useState([]);
   const [notifications, setNotifications] = useState({});
+  const [securityControls, setSecurityControls] = useState(buildSecurityDefaults);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminStats, setAdminStats] = useState({ total: 0, active: 0, restricted: 0 });
+  const [adminError, setAdminError] = useState(null);
+  const [adminsLoading, setAdminsLoading] = useState(false);
+  const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [adminModalMode, setAdminModalMode] = useState("create");
+  const [adminModalSaving, setAdminModalSaving] = useState(false);
+  const [adminModalError, setAdminModalError] = useState(null);
+  const [selectedAdmin, setSelectedAdmin] = useState(null);
+  const [adminForm, setAdminForm] = useState(buildAdminFormDefaults);
+  const [pendingActionId, setPendingActionId] = useState(null);
 
+  const applyAdminPayload = (payload) => {
+    const admins = payload?.admins ?? [];
+    const meta = payload?.meta ?? {};
+    setAdminUsers(admins);
+    setAdminStats({
+      total: Number(meta.total ?? admins.length ?? 0),
+      active: Number(meta.active ?? 0),
+      restricted: Number(meta.restricted ?? 0),
+    });
+  };
+
+  const loadAdminUsers = async () => {
+    try {
+      setAdminsLoading(true);
+      setAdminError(null);
+      const response = await client.get("/api/admin/settings/admin-users");
+      applyAdminPayload(response.data ?? {});
+    } catch (err) {
+      setAdminError(err?.response?.data?.message ?? "Unable to load admin users");
+    } finally {
+      setAdminsLoading(false);
+    }
+  };
+
+  const openCreateAdminModal = () => {
+    setSelectedAdmin(null);
+    setAdminModalMode("create");
+    setAdminForm(buildAdminFormDefaults());
+    setAdminModalError(null);
+    setAdminModalOpen(true);
+  };
+
+  const openEditAdminModal = (admin) => {
+    setSelectedAdmin(admin);
+    setAdminModalMode("edit");
+    setAdminModalError(null);
+    setAdminForm({
+      email: admin.email ?? "",
+      firstName: admin.firstName ?? "",
+      lastName: admin.lastName ?? "",
+      password: "",
+      status: admin.status ?? "active",
+      roles: Array.isArray(admin.roleIds)
+        ? admin.roleIds.map((roleId) => Number(roleId)).filter((value) => Number.isFinite(value))
+        : (Array.isArray(admin.roles) ? admin.roles : []).map((role) => Number(role?.id ?? role)).filter((value) => Number.isFinite(value)),
+    });
+    setAdminModalOpen(true);
+  };
+
+  const closeAdminModal = () => {
+    setAdminModalOpen(false);
+    setSelectedAdmin(null);
+    setAdminModalError(null);
+    setAdminModalSaving(false);
+    setAdminForm(buildAdminFormDefaults());
+  };
+
+  const updateAdminForm = (field, value) => {
+    setAdminForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const toggleRoleSelection = (roleId) => {
+    const normalized = Number(roleId);
+    if (!Number.isFinite(normalized)) {
+      return;
+    }
+    setAdminForm((prev) => {
+      const nextRoles = new Set(prev.roles ?? []);
+      if (nextRoles.has(normalized)) {
+        nextRoles.delete(normalized);
+      } else {
+        nextRoles.add(normalized);
+      }
+      return { ...prev, roles: Array.from(nextRoles) };
+    });
+  };
+
+  const formatDateTime = (value) => {
+    if (!value) {
+      return "—";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+  };
+
+  const resolveStatusTone = (status) => {
+    switch (status) {
+      case "active":
+        return "is-green";
+      case "invited":
+        return "is-blue";
+      case "suspended":
+        return "is-orange";
+      case "disabled":
+        return "is-red";
+      default:
+        return "";
+    }
+  };
+
+  const handleAdminSubmit = async (event) => {
+    event?.preventDefault();
+    setAdminModalError(null);
+
+    if (!adminForm.email.trim()) {
+      setAdminModalError("Email is required.");
+      return;
+    }
+
+    if (!adminForm.firstName.trim() || !adminForm.lastName.trim()) {
+      setAdminModalError("First name and last name are required.");
+      return;
+    }
+
+    if (adminModalMode === "create" && (!adminForm.password || adminForm.password.length < 8)) {
+      setAdminModalError("Password must be at least 8 characters long.");
+      return;
+    }
+
+    const payload = {
+      email: adminForm.email.trim().toLowerCase(),
+      firstName: adminForm.firstName.trim(),
+      lastName: adminForm.lastName.trim(),
+      status: adminForm.status,
+      roles: (adminForm.roles ?? []).map((roleId) => Number(roleId)).filter((value) => Number.isFinite(value)),
+    };
+
+    setAdminModalSaving(true);
+
+    try {
+      if (adminModalMode === "create") {
+        await client.post("/api/admin/settings/admin-users", {
+          ...payload,
+          password: adminForm.password,
+        });
+      } else if (selectedAdmin?.id) {
+        await client.put(`/api/admin/settings/admin-users/${selectedAdmin.id}`, payload);
+      }
+
+      await loadAdminUsers();
+      closeAdminModal();
+    } catch (err) {
+      setAdminModalError(
+        err?.response?.data?.message
+          ?? `Unable to ${adminModalMode === "create" ? "create" : "update"} admin user`,
+      );
+    } finally {
+      setAdminModalSaving(false);
+    }
+  };
+
+  const handleDeleteAdmin = async (admin) => {
+    if (!admin?.id) {
+      return;
+    }
+
+    // eslint-disable-next-line no-alert
+    const confirmed = window.confirm(`Delete admin ${admin.email}? This cannot be undone.`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setPendingActionId(admin.id);
+      setAdminError(null);
+      await client.delete(`/api/admin/settings/admin-users/${admin.id}`);
+      await loadAdminUsers();
+    } catch (err) {
+      setAdminError(err?.response?.data?.message ?? "Unable to delete admin user");
+    } finally {
+      setPendingActionId(null);
+    }
+  };
   useEffect(() => {
     let subscribed = true;
 
@@ -21,9 +271,10 @@ export default function AdminSettings() {
       try {
         setLoading(true);
         setError(null);
-        const [systemResponse, rolesResponse] = await Promise.all([
+        const [systemResponse, rolesResponse, adminsResponse] = await Promise.all([
           client.get("/api/admin/settings/system"),
           client.get("/api/admin/settings/roles"),
+          client.get("/api/admin/settings/admin-users"),
         ]);
 
         if (!subscribed) {
@@ -38,7 +289,10 @@ export default function AdminSettings() {
           aiSummary: Boolean(notificationPayload.aiSummary),
           escalationSms: Boolean(notificationPayload.escalationSms),
         });
+        setSecurityControls(normalizeSecurityControls(settingsPayload.securityControls));
         setRoles(rolesResponse.data?.roles ?? []);
+        applyAdminPayload(adminsResponse.data ?? {});
+        setAdminError(null);
         setDirty(false);
       } catch (err) {
         if (!subscribed) {
@@ -47,9 +301,14 @@ export default function AdminSettings() {
         setError(err?.response?.data?.message ?? "Unable to load admin settings");
         setSystemSettings({});
         setRoles([]);
+        setAdminUsers([]);
+        setAdminStats({ total: 0, active: 0, restricted: 0 });
+        setAdminError(err?.response?.data?.message ?? "Unable to load admin users");
+        setSecurityControls(buildSecurityDefaults());
       } finally {
         if (subscribed) {
           setLoading(false);
+          setAdminsLoading(false);
         }
       }
     };
@@ -68,23 +327,23 @@ export default function AdminSettings() {
     });
   };
 
-  const environment = systemSettings.environment ?? {};
+  const toggleSecurityFlag = (key) => {
+    setSecurityControls((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      setDirty(true);
+      return next;
+    });
+  };
 
-  const escalationLevels = useMemo(() => {
-    const matrix = systemSettings.escalationMatrix;
-    if (Array.isArray(matrix)) {
-      return matrix.map((entry, index) => ({
-        id: entry.id ?? `matrix-${index}`,
-        name: entry.name ?? "Level",
-        owner: entry.owner ?? "Unassigned",
-        response: entry.response ?? "",
-        fallback: entry.fallback ?? "",
-      }));
-    }
-    return [];
-  }, [systemSettings.escalationMatrix]);
-
-  const roleCards = useMemo(() => roles.slice(0, 3), [roles]);
+  const updateSecurityControl = (key, value) => {
+    setSecurityControls((prev) => {
+      if (prev[key] === value) {
+        return prev;
+      }
+      setDirty(true);
+      return { ...prev, [key]: value };
+    });
+  };
 
   const handleSave = async () => {
     try {
@@ -94,10 +353,11 @@ export default function AdminSettings() {
       await client.put("/api/admin/settings/system", {
         settings: {
           notificationSettings: notifications,
+          securityControls,
         },
       });
       setDirty(false);
-      setSuccessMessage("Notification settings saved");
+      setSuccessMessage("Settings saved");
     } catch (err) {
       setError(err?.response?.data?.message ?? "Unable to save settings");
     } finally {
@@ -111,9 +371,10 @@ export default function AdminSettings() {
     setError(null);
     setLoading(true);
     try {
-      const [systemResponse, rolesResponse] = await Promise.all([
+      const [systemResponse, rolesResponse, adminsResponse] = await Promise.all([
         client.get("/api/admin/settings/system"),
         client.get("/api/admin/settings/roles"),
+        client.get("/api/admin/settings/admin-users"),
       ]);
       const settingsPayload = systemResponse.data?.settings ?? {};
       setSystemSettings(settingsPayload);
@@ -123,16 +384,22 @@ export default function AdminSettings() {
         aiSummary: Boolean(notificationPayload.aiSummary),
         escalationSms: Boolean(notificationPayload.escalationSms),
       });
+      setSecurityControls(normalizeSecurityControls(settingsPayload.securityControls));
       setRoles(rolesResponse.data?.roles ?? []);
+      applyAdminPayload(adminsResponse.data ?? {});
+      setAdminError(null);
     } catch (err) {
       setError(err?.response?.data?.message ?? "Unable to refresh settings");
+      setAdminError(err?.response?.data?.message ?? "Unable to load admin users");
+      setSecurityControls(buildSecurityDefaults());
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="admin-page admin-stack-lg">
+    <>
+      <div className="admin-page admin-stack-lg">
       <header className="admin-row">
         <div>
           <h1>Admin Settings</h1>
@@ -166,39 +433,150 @@ export default function AdminSettings() {
       {error ? <div className="admin-alert is-error">{error}</div> : null}
       {successMessage ? <div className="admin-alert is-success">{successMessage}</div> : null}
 
-      <section className="admin-card-grid cols-3">
-        <article className="admin-card">
-          <div className="admin-card__label">Environment</div>
-          <div className="admin-card__value">{environment.name ?? "Unspecified"}</div>
-          <div className="admin-card__meta">
-            {environment.description ?? "Environment configuration"}
+      <section className="admin-surface admin-stack-md">
+        <div className="admin-tabs">
+          <div className="admin-tabs__list">
+            <button type="button" className="admin-tabs__trigger is-active">User Management</button>
+            <button type="button" className="admin-tabs__trigger" disabled>Companies</button>
+            <button type="button" className="admin-tabs__trigger" disabled>Unions</button>
+            <button type="button" className="admin-tabs__trigger" disabled>AI Settings</button>
+            <button type="button" className="admin-tabs__trigger" disabled>System Config</button>
+            <button type="button" className="admin-tabs__trigger" disabled>Templates</button>
+            <button type="button" className="admin-tabs__trigger" disabled>Data &amp; Privacy</button>
           </div>
-        </article>
-        <article className="admin-card">
-          <div className="admin-card__label">Default Response SLA</div>
-          <div className="admin-card__value">
-            {environment.defaultResponseSlaHours
-              ? `${environment.defaultResponseSlaHours}h`
-              : "Not set"}
+        </div>
+        <div className="admin-row">
+          <div>
+            <h2>Administrator Accounts</h2>
+            <p className="admin-muted">
+              Manage system administrators, passwords, and their role assignments.
+            </p>
           </div>
-          <div className="admin-card__meta">Applies to untagged requests</div>
-        </article>
-        <article className="admin-card">
-          <div className="admin-card__label">AI Assist Rollout</div>
-          <div className="admin-card__value">
-            {environment.aiAssistRolloutPercent !== undefined
-              ? `${environment.aiAssistRolloutPercent}%`
-              : "0%"}
+          <div className="admin-row" style={{ gap: "8px" }}>
+            <button
+              type="button"
+              className="admin-button is-primary"
+              onClick={openCreateAdminModal}
+            >
+              <Plus size={16} /> Add New Admin
+            </button>
           </div>
-          <div className="admin-card__meta">Admins with AI suggestions enabled</div>
-        </article>
+        </div>
+        <div className="admin-card-grid cols-3">
+          <article className="admin-card">
+            <div className="admin-card__label">Total Admins</div>
+            <div className="admin-card__value">{adminStats.total}</div>
+            <div className="admin-card__meta">Includes invited and active accounts</div>
+          </article>
+          <article className="admin-card">
+            <div className="admin-card__label">Active</div>
+            <div className="admin-card__value">{adminStats.active}</div>
+            <div className="admin-card__meta">Currently able to access the console</div>
+          </article>
+          <article className="admin-card">
+            <div className="admin-card__label">Restricted</div>
+            <div className="admin-card__value">{adminStats.restricted}</div>
+            <div className="admin-card__meta">Suspended or disabled accounts</div>
+          </article>
+        </div>
+        {adminError ? <div className="admin-alert is-error">{adminError}</div> : null}
+        <div className="admin-scroll">
+          <table className="admin-table admin-table--condensed">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Roles</th>
+                <th>Status</th>
+                <th>Last Login</th>
+                <th>Created</th>
+                <th style={{ width: "260px" }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {adminUsers.map((admin) => {
+                const fullName = admin.fullName || [admin.firstName, admin.lastName].filter(Boolean).join(" ").trim();
+                const rolesList = Array.isArray(admin.roles) && admin.roles.length
+                  ? admin.roles
+                  : [];
+                return (
+                  <tr key={admin.id}>
+                    <td>
+                      <div className="admin-stack">
+                        <strong>{fullName || "—"}</strong>
+                        <span className="admin-muted" style={{ fontSize: "12px" }}>{admin.email}</span>
+                      </div>
+                    </td>
+                    <td>{admin.email}</td>
+                    <td>
+                      {rolesList.length ? (
+                        <div className="admin-inline-list">
+                          {rolesList.map((roleName) => (
+                            <span key={roleName} className="admin-chip">{roleName}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="admin-muted">Unassigned</span>
+                      )}
+                    </td>
+                    <td>
+                      <span className={`admin-chip ${resolveStatusTone(admin.status)}`.trim()}>
+                        {admin.status ?? "unknown"}
+                      </span>
+                    </td>
+                    <td>{formatDateTime(admin.lastLoginAt)}</td>
+                    <td>{formatDateTime(admin.createdAt)}</td>
+                    <td>
+                      <div className="admin-table__actions">
+                        <button
+                          type="button"
+                          className="admin-action-button"
+                          onClick={() => openEditAdminModal(admin)}
+                          disabled={Boolean(pendingActionId)}
+                        >
+                          <Edit size={16} /> Edit &amp; Permissions
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-action-button is-subtle"
+                          onClick={() => handleDeleteAdmin(admin)}
+                          disabled={pendingActionId === admin.id}
+                        >
+                          {pendingActionId === admin.id ? <Loader2 size={16} /> : <Trash2 size={16} />}
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {adminsLoading ? (
+                <tr>
+                  <td colSpan={7}>
+                    <div className="admin-empty">Loading administrators…</div>
+                  </td>
+                </tr>
+              ) : null}
+              {!adminsLoading && adminUsers.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>
+                    <div className="admin-empty">No administrator accounts found.</div>
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </section>
 
-      <section className="admin-surface admin-stack-md">
+        <section className="admin-surface admin-stack-md">
         <header className="admin-row">
-          <div className="admin-row" style={{ gap: "8px" }}>
+          <div
+            className="admin-row"
+            style={{ gap: "8px", alignItems: "center", flexWrap: "nowrap" }}
+          >
             <Bell size={18} />
-            <div>
+            <div style={{ minWidth: 0 }}>
               <h2>Notifications</h2>
               <p className="admin-muted">
                 Configure alerts sent to the admin team when critical events occur.
@@ -264,77 +642,245 @@ export default function AdminSettings() {
       </section>
 
       <section className="admin-surface admin-stack-md">
-        <div className="admin-row" style={{ gap: "8px" }}>
-          <Shield size={18} />
-          <div>
-            <h2>Access & Role Controls</h2>
-            <p className="admin-muted">
-              Map personas to capabilities to simplify onboarding and audits.
-            </p>
+        <header className="admin-row">
+          <div
+            className="admin-row"
+            style={{ gap: "8px", alignItems: "center", flexWrap: "nowrap" }}
+          >
+            <Shield size={18} />
+            <div style={{ minWidth: 0 }}>
+              <h2>Security Settings</h2>
+              <p className="admin-muted">
+                Configure safeguards that apply to every administrator account.
+              </p>
+            </div>
           </div>
-        </div>
-        <div className="admin-role-grid">
-          {roleCards.length === 0 ? (
-            <div className="admin-empty">No roles available.</div>
-          ) : (
-            roleCards.map((role) => (
-              <div key={role.id} className="admin-role-card">
-                <h3>{role.name}</h3>
-                <ul>
-                  {(Array.isArray(role.permissions) ? role.permissions : []).slice(0, 3).map((permission) => (
-                    <li key={permission}>{permission}</li>
-                  ))}
-                </ul>
-                <span className="admin-chip is-green">{role.adminCount} assigned</span>
-              </div>
-            ))
-          )}
+        </header>
+
+        <div className="admin-setting-list">
+          <div className="admin-setting-item">
+            <div>
+              <strong>Two-Factor Authentication</strong>
+              <p className="admin-muted">Require 2FA for all admin accounts.</p>
+            </div>
+            <button
+              type="button"
+              className={`admin-toggle ${securityControls.requireTwoFactor ? "active" : ""}`.trim()}
+              onClick={() => toggleSecurityFlag("requireTwoFactor")}
+              disabled={loading || saving}
+            >
+              <span />
+            </button>
+          </div>
+
+          <div className="admin-setting-item">
+            <div>
+              <strong>Session Timeout</strong>
+              <p className="admin-muted">Auto-logout after admin inactivity.</p>
+            </div>
+            <div className="admin-select">
+              <select
+                aria-label="Session timeout"
+                value={securityControls.sessionTimeoutMinutes}
+                onChange={(event) => updateSecurityControl("sessionTimeoutMinutes", Number(event.target.value))}
+                disabled={loading || saving}
+              >
+                {SESSION_TIMEOUT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="admin-setting-item">
+            <div>
+              <strong>Login Attempt Limit</strong>
+              <p className="admin-muted">Lock an account after repeated failures.</p>
+            </div>
+            <div className="admin-select">
+              <select
+                aria-label="Login attempt limit"
+                value={securityControls.loginAttemptLimit}
+                onChange={(event) => updateSecurityControl("loginAttemptLimit", Number(event.target.value))}
+                disabled={loading || saving}
+              >
+                {LOGIN_ATTEMPT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="admin-setting-item">
+            <div>
+              <strong>Audit Logging</strong>
+              <p className="admin-muted">Track sensitive changes for compliance.</p>
+            </div>
+            <button
+              type="button"
+              className={`admin-toggle ${securityControls.auditLoggingEnabled ? "active" : ""}`.trim()}
+              onClick={() => toggleSecurityFlag("auditLoggingEnabled")}
+              disabled={loading || saving}
+            >
+              <span />
+            </button>
+          </div>
         </div>
       </section>
 
-      <section className="admin-surface admin-stack-md">
-        <div className="admin-row" style={{ gap: "8px" }}>
-          <Database size={18} />
-          <div>
-            <h2>Escalation Matrix</h2>
-            <p className="admin-muted">
-              Define who is accountable at each severity level and how quickly they must respond.
-            </p>
+      </div>
+
+      {adminModalOpen ? (
+          <div className="admin-dialog" role="dialog" aria-modal="true">
+            <div
+              className="admin-dialog__backdrop"
+              onClick={adminModalSaving ? undefined : closeAdminModal}
+              role="presentation"
+            />
+            <div className="admin-dialog__panel">
+              <div className="admin-dialog__header">
+                <h3>
+                  {adminModalMode === "create"
+                    ? "Add New Admin"
+                    : `Edit Admin: ${selectedAdmin?.fullName ?? selectedAdmin?.email ?? ""}`}
+                </h3>
+                <button
+                  type="button"
+                  className="admin-icon-button"
+                  onClick={closeAdminModal}
+                  disabled={adminModalSaving}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <form className="admin-dialog__body" onSubmit={handleAdminSubmit}>
+                <div className="admin-form-section">
+                  <div className="admin-field">
+                    <span>Email</span>
+                    <input
+                      type="email"
+                      value={adminForm.email}
+                      onChange={(event) => updateAdminForm("email", event.target.value)}
+                      placeholder="admin@example.org"
+                      required
+                      disabled={adminModalSaving}
+                    />
+                  </div>
+                  <div className="admin-field">
+                    <span>First Name</span>
+                    <input
+                      value={adminForm.firstName}
+                      onChange={(event) => updateAdminForm("firstName", event.target.value)}
+                      placeholder="Given name"
+                      required
+                      disabled={adminModalSaving}
+                    />
+                  </div>
+                  <div className="admin-field">
+                    <span>Last Name</span>
+                    <input
+                      value={adminForm.lastName}
+                      onChange={(event) => updateAdminForm("lastName", event.target.value)}
+                      placeholder="Family name"
+                      required
+                      disabled={adminModalSaving}
+                    />
+                  </div>
+                  <div className="admin-field">
+                    <span>Status</span>
+                    <select
+                      value={adminForm.status}
+                      onChange={(event) => updateAdminForm("status", event.target.value)}
+                      disabled={adminModalSaving}
+                    >
+                      {ADMIN_STATUS_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option.charAt(0).toUpperCase() + option.slice(1)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {adminModalMode === "create" ? (
+                    <div className="admin-field">
+                      <span>Temporary Password</span>
+                      <input
+                        type="password"
+                        value={adminForm.password}
+                        onChange={(event) => updateAdminForm("password", event.target.value)}
+                        placeholder="Minimum 8 characters"
+                        required
+                        disabled={adminModalSaving}
+                      />
+                      <small>The admin will be prompted to change this password on first login.</small>
+                    </div>
+                  ) : (
+                    <div className="admin-field">
+                      <span>Password</span>
+                      <input value="********" readOnly disabled />
+                      <small>Use the password reset workflow to change credentials.</small>
+                    </div>
+                  )}
+                </div>
+
+                <div className="admin-form-section">
+                  <div>
+                    <strong>Role assignments</strong>
+                    <p className="admin-muted" style={{ margin: 0 }}>
+                      Select roles that determine which modules the admin can access.
+                    </p>
+                  </div>
+                  {roles.length ? (
+                    roles.map((role) => {
+                      const isChecked = (adminForm.roles ?? []).includes(role.id);
+                      return (
+                        <label key={role.id} className="admin-role-option">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleRoleSelection(role.id)}
+                            disabled={adminModalSaving}
+                          />
+                          <div>
+                            <strong>{role.name}</strong>
+                            <small>{role.description ?? "No description provided."}</small>
+                            <span className="admin-chip is-blue">{role.adminCount} assigned</span>
+                          </div>
+                        </label>
+                      );
+                    })
+                  ) : (
+                    <span className="admin-muted">No roles available. Create roles to manage permissions.</span>
+                  )}
+                </div>
+
+                {adminModalError ? <div className="admin-alert is-error">{adminModalError}</div> : null}
+
+                <div className="admin-dialog__footer">
+                  <button
+                    type="button"
+                    className="admin-button"
+                    onClick={closeAdminModal}
+                    disabled={adminModalSaving}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="admin-button is-primary"
+                    disabled={adminModalSaving}
+                  >
+                    {adminModalSaving ? <Loader2 size={16} /> : <Save size={16} />}
+                    {adminModalMode === "create" ? "Create Admin" : "Save Changes"}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-        {escalationLevels.length === 0 ? (
-          <div className="admin-empty">No escalation matrix configured.</div>
-        ) : (
-          <div className="admin-scroll">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>Level</th>
-                  <th>Primary Owner</th>
-                  <th>Response Time</th>
-                  <th>Fallback</th>
-                  <th>Confirmation</th>
-                </tr>
-              </thead>
-              <tbody>
-                {escalationLevels.map((level) => (
-                  <tr key={level.id}>
-                    <td>{level.name}</td>
-                    <td>{level.owner}</td>
-                    <td>{level.response || ""}</td>
-                    <td>{level.fallback || ""}</td>
-                    <td>
-                      <span className="admin-chip is-green">
-                        <Check size={14} /> On track
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </div>
-  );
+        ) : null}
+      </>
+    );
 }

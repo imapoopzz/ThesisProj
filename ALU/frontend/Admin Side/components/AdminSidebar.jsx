@@ -12,6 +12,7 @@ import {
   Wallet,
   HeartHandshake,
   CalendarClock,
+  IdCardIcon,
 } from "lucide-react";
 import "../styles/admin-base.css";
 
@@ -20,13 +21,13 @@ const navItems = [
   { id: "members", label: "Members", icon: Users },
   { id: "approvals", label: "Approvals", icon: CheckSquare },
   { id: "dues", label: "Dues & Finance", icon: Wallet },
+  { id: "security", label: "ID Card Management", icon: IdCardIcon },
   { id: "benefits", label: "Benefits Assistance", icon: HeartHandshake },
   { id: "tickets", label: "Tickets", icon: ClipboardList },
   { id: "events", label: "Event Management", icon: CalendarClock },
   { id: "reports", label: "Reports", icon: LineChart },
   { id: "audit", label: "Audit Log", icon: FileText },
   { id: "ai", label: "AI Settings", icon: Bot },
-  { id: "security", label: "Security", icon: ShieldAlert },
   { id: "settings", label: "Admin Settings", icon: Settings },
 ];
 
