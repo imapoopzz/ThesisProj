@@ -6,7 +6,6 @@ import {
   CheckSquare,
   LineChart,
   Settings,
-  Bot,
   FileText,
   ShieldAlert,
   Wallet,
@@ -27,7 +26,6 @@ const navItems = [
   { id: "events", label: "Event Management", icon: CalendarClock },
   { id: "reports", label: "Reports", icon: LineChart },
   { id: "audit", label: "Audit Log", icon: FileText },
-  { id: "ai", label: "AI Settings", icon: Bot },
   { id: "settings", label: "Admin Settings", icon: Settings },
 ];
 
