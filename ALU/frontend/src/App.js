@@ -29,6 +29,8 @@ import EventManagement from '@adminPages/EventManagement.jsx';
 import IDCardManagement from '@adminPages/IDCardManagement.jsx';
 import MemberProfile from '@adminPages/MemberProfile.jsx';
 import AdminSettings from '@adminPages/AdminSettings.jsx';
+import AdminLogin from '@adminPages/Login.jsx';
+import AdminForgotPassword from '@adminPages/ForgotPassword.jsx';
 // (membership application API still available if needed)
 import { mockUser, mockDues, mockNotifications, mockNews } from './data/mockData';
 
@@ -44,6 +46,26 @@ function AdminDashboardRoute() {
   const outletContext = useOutletContext();
   const onNavigate = outletContext?.onNavigate;
   return <AdminDashboard onNavigate={onNavigate} />;
+}
+
+function ProtectedAdminRoute({ children, requiredRole }) {
+  const adminUserStr = localStorage.getItem('adminUser');
+  if (!adminUserStr) {
+    return <Navigate to="/admin/login" replace />;
+  }
+
+  try {
+    const adminUser = JSON.parse(adminUserStr);
+    if (requiredRole) {
+      const roles = adminUser.roles || [];
+      if (!roles.includes(requiredRole)) {
+        return <Navigate to="/admin/dashboard" replace />;
+      }
+    }
+    return children;
+  } catch (e) {
+    return <Navigate to="/admin/login" replace />;
+  }
 }
 
 function App() {
@@ -248,7 +270,16 @@ function App() {
             </Protected>
           )}
         />
-        <Route path="/admin" element={<AdminLayout />}>
+        <Route path="/admin/login" element={<AdminLogin />} />
+        <Route path="/admin/forgot-password" element={<AdminForgotPassword />} />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedAdminRoute>
+              <AdminLayout />
+            </ProtectedAdminRoute>
+          }
+        >
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<AdminDashboardRoute />} />
           <Route path="members" element={<MembersTable />} />
@@ -264,7 +295,14 @@ function App() {
           <Route path="dues-finance" element={<DuesFinance />} />
           <Route path="event-management" element={<EventManagement />} />
           <Route path="id-card-management" element={<IDCardManagement />} />
-          <Route path="admin-settings" element={<AdminSettings />} />
+          <Route
+            path="admin-settings"
+            element={
+              <ProtectedAdminRoute requiredRole="SUPER_ADMIN">
+                <AdminSettings />
+              </ProtectedAdminRoute>
+            }
+          />
           <Route path="*" element={<Navigate to="dashboard" replace />} />
         </Route>
         <Route path="*" element={<Navigate to={defaultRoute} replace />} />
