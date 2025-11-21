@@ -28,21 +28,67 @@ const tabs = [
 const exportHistory = [];
 const scheduledReports = [];
 
+const formatPesoCompact = (value) => {
+  if (!Number.isFinite(value)) {
+    return '₱0';
+  }
+  if (value === 0) {
+    return '₱0';
+  }
+  const absolute = Math.abs(value);
+  if (absolute >= 1000000) {
+    const scaled = value / 1000000;
+    const digits = Math.abs(scaled) >= 10 ? 0 : 1;
+    return `₱${scaled.toFixed(digits)}M`;
+  }
+  if (absolute >= 1000) {
+    const scaled = value / 1000;
+    const digits = Math.abs(scaled) >= 10 ? 0 : 1;
+    return `₱${scaled.toFixed(digits)}K`;
+  }
+  return `₱${Math.round(value)}`;
+};
+
+const computeAxisScale = (value, sections = 4) => {
+  const safeValue = Number.isFinite(value) && value > 0 ? value : 0;
+  if (safeValue === 0) {
+    return { max: 1, step: 1 };
+  }
+  const roughStep = safeValue / Math.max(sections, 1);
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const candidates = [1, 2, 2.5, 5, 10];
+  let step = magnitude;
+  for (const multiplier of candidates) {
+    const option = multiplier * magnitude;
+    step = option;
+    if (roughStep <= option) {
+      break;
+    }
+  }
+  const max = step * Math.ceil(safeValue / step);
+  return { max, step };
+};
+
 export default function ReportsAnalytics() {
   const [activeTab, setActiveTab] = useState("overview");
-  const timeRange = "30d";
+  const [timeRange, setTimeRange] = useState("30d");
+  const [selectedCompany, setSelectedCompany] = useState("all");
+  const [isExportingMembership, setIsExportingMembership] = useState(false);
+  const [growthHoverIndex, setGrowthHoverIndex] = useState(null);
+  const [distributionHoverIndex, setDistributionHoverIndex] = useState(null);
+  const [collectionHoverIndex, setCollectionHoverIndex] = useState(null);
 
   const rangeShortLabels = {
     "7d": "Last 7 days",
     "30d": "Last 30 days",
-    "90d": "Last 90 days",
+    "90d": "Last 3 months",
     "12m": "Last 12 months",
   };
 
   const rangeDurationLabels = {
     "7d": "7 days",
     "30d": "30 days",
-    "90d": "90 days",
+    "90d": "3 months",
     "12m": "12 months",
   };
 
@@ -55,45 +101,156 @@ export default function ReportsAnalytics() {
 
   const [summary, setSummary] = useState(null);
 
+  const summaryMeta = summary?.meta ?? null;
+
+  const overviewAlert = useMemo(() => {
+    if (!summary) {
+      return {
+        type: 'error',
+        message: 'Analytics summary failed to load. Please capture this screen and send it to Engineering so we can trace why the report has no data.',
+      };
+    }
+
+    if (!summaryMeta) {
+      return null;
+    }
+
+    const normalizedWarnings = Array.isArray(summaryMeta.warnings)
+      ? summaryMeta.warnings.filter(Boolean)
+      : [];
+
+    let baseMessage = summaryMeta.alertMessage ?? null;
+    if (!baseMessage) {
+      if (normalizedWarnings.length) {
+        [baseMessage] = normalizedWarnings;
+      } else if (summaryMeta.error) {
+        baseMessage = `Analytics warning: ${summaryMeta.error}`;
+      } else if (summaryMeta.isSample) {
+        baseMessage = 'Displaying sample analytics until live data is available.';
+      }
+    }
+
+    const extras = normalizedWarnings.filter((warning) => warning && warning !== baseMessage);
+    if (summaryMeta.error && summaryMeta.error !== baseMessage) {
+      extras.push(`Error: ${summaryMeta.error}`);
+    }
+
+    const message = [baseMessage, ...extras].filter(Boolean).join(' • ');
+    if (!message) {
+      return null;
+    }
+
+    const resolvedType = (() => {
+      if (typeof summaryMeta.alertType === 'string' && summaryMeta.alertType.trim()) {
+        return summaryMeta.alertType.trim().toLowerCase();
+      }
+      if (summaryMeta.error) {
+        return 'error';
+      }
+      if (summaryMeta.isSample) {
+        return 'info';
+      }
+      if (normalizedWarnings.length) {
+        return 'warning';
+      }
+      return 'info';
+    })();
+
+    return { type: resolvedType, message };
+  }, [summary, summaryMeta]);
+
   const selectedRangeShort = rangeShortLabels[timeRange] ?? "Selected range";
   const selectedRangeDuration = rangeDurationLabels[timeRange] ?? "selected range";
 
-  const newJoinersValue = useMemo(() => {
-    const members = summary?.members;
-    if (!members) return null;
+  const getJoinersValue = (membersData, range) => {
+    if (!membersData) return null;
 
-    if (members.newJoinersByRange && members.newJoinersByRange[timeRange] != null) {
-      return members.newJoinersByRange[timeRange];
+    if (membersData.newJoinersByRange && membersData.newJoinersByRange[range] != null) {
+      return membersData.newJoinersByRange[range];
     }
-    if (members.newRegistrationsByRange && members.newRegistrationsByRange[timeRange] != null) {
-      return members.newRegistrationsByRange[timeRange];
-    }
-
-    if (members.newJoiners && typeof members.newJoiners === "object" && members.newJoiners[timeRange] != null) {
-      return members.newJoiners[timeRange];
-    }
-    if (members.newRegistrations && typeof members.newRegistrations === "object" && members.newRegistrations[timeRange] != null) {
-      return members.newRegistrations[timeRange];
+    if (membersData.newRegistrationsByRange && membersData.newRegistrationsByRange[range] != null) {
+      return membersData.newRegistrationsByRange[range];
     }
 
-    const field = newJoinerFieldByRange[timeRange];
-    if (field && members[field] != null) {
-      return members[field];
+    if (membersData.newJoiners && typeof membersData.newJoiners === 'object' && membersData.newJoiners[range] != null) {
+      return membersData.newJoiners[range];
     }
-    const registrationField = field ? field.replace("newJoiners", "newRegistrations") : null;
-    if (registrationField && members[registrationField] != null) {
-      return members[registrationField];
+    if (membersData.newRegistrations && typeof membersData.newRegistrations === 'object' && membersData.newRegistrations[range] != null) {
+      return membersData.newRegistrations[range];
     }
 
-    if (members.newJoiners30d != null) {
-      return members.newJoiners30d;
+    const field = newJoinerFieldByRange[range];
+    if (field && membersData[field] != null) {
+      return membersData[field];
     }
-    if (members.newRegistrations30d != null) {
-      return members.newRegistrations30d;
+    const registrationField = field ? field.replace('newJoiners', 'newRegistrations') : null;
+    if (registrationField && membersData[registrationField] != null) {
+      return membersData[registrationField];
+    }
+
+    if (membersData.newJoiners30d != null) {
+      return membersData.newJoiners30d;
+    }
+    if (membersData.newRegistrations30d != null) {
+      return membersData.newRegistrations30d;
     }
 
     return null;
-  }, [summary, timeRange]);
+  };
+
+  const companySnapshot = useMemo(() => {
+    if (selectedCompany === 'all') {
+      return null;
+    }
+    const companies = summary?.members?.companyStats ?? [];
+    const target = selectedCompany.toLowerCase();
+    return companies.find((entry) => (entry.company ?? '').toLowerCase() === target) ?? null;
+  }, [selectedCompany, summary]);
+
+  const companyOptions = useMemo(() => {
+    const filters = Array.isArray(summary?.members?.companyFilters)
+      ? summary.members.companyFilters
+      : [];
+    const distributionCompanies = Array.isArray(summary?.members?.distribution)
+      ? summary.members.distribution.map((item) => item.company).filter(Boolean)
+      : [];
+    const combined = [...filters, ...distributionCompanies];
+    const seen = new Set();
+    return combined
+      .map((name) => (typeof name === 'string' ? name.trim() : ''))
+      .filter((name) => {
+        if (!name) {
+          return false;
+        }
+        const key = name.toLowerCase();
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      });
+  }, [summary]);
+
+  useEffect(() => {
+    if (selectedCompany === 'all') {
+      return;
+    }
+    if (!companyOptions.length) {
+      setSelectedCompany('all');
+      return;
+    }
+    const exists = companyOptions.some((name) => name === selectedCompany);
+    if (!exists) {
+      setSelectedCompany('all');
+    }
+  }, [companyOptions, selectedCompany]);
+
+  const newJoinersValue = useMemo(
+    () => getJoinersValue(companySnapshot ?? summary?.members, timeRange),
+    [companySnapshot, summary, timeRange],
+  );
+
+  const scopedMembers = companySnapshot ?? summary?.members;
 
   // helpers available to all hooks in this component
   const formatCount = (v) => (v === null || v === undefined ? '—' : Number(v).toLocaleString());
@@ -121,6 +278,104 @@ export default function ReportsAnalytics() {
     }
   };
 
+  const toFiniteNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+
+  const pickFirstFinite = (...values) => {
+    const candidate = values
+      .map((value) => toFiniteNumber(value))
+      .find((value) => value != null);
+    return candidate ?? null;
+  };
+
+  const clampValue = (value, min, max) => {
+    if (value == null || Number.isNaN(value)) {
+      return min;
+    }
+    return Math.min(Math.max(value, min), max);
+  };
+
+  const totalMembersValue = summary?.members?.total;
+  const retentionRateNumeric = Number(summary?.members?.retentionRate);
+  const totalMembersMeta = Number.isFinite(retentionRateNumeric)
+    ? `Retention ${formatPercent(retentionRateNumeric)}`
+    : null;
+  const newJoinersChangeNumeric = Number(summary?.members?.newJoinersChange);
+  const newJoinersMetaChange = Number.isFinite(newJoinersChangeNumeric)
+    ? `${newJoinersChangeNumeric >= 0 ? '+' : ''}${Math.abs(newJoinersChangeNumeric).toFixed(1)}% vs prior`
+    : null;
+
+  const membershipDemographics = summary?.members?.demographics ?? null;
+  const unionPositionsSource = membershipDemographics?.unionPositions;
+  const tenurePrimarySource = membershipDemographics?.tenure;
+  const tenureFallbackSource = membershipDemographics?.tenureBuckets;
+
+  const unionPositionStats = useMemo(() => {
+    const records = Array.isArray(unionPositionsSource)
+      ? unionPositionsSource
+      : [];
+    if (!records.length) {
+      return [];
+    }
+    const total = records.reduce((acc, record) => {
+      const numeric = Number(record.value ?? record.count ?? record.total ?? 0);
+      return acc + (Number.isFinite(numeric) && numeric > 0 ? numeric : 0);
+    }, 0);
+    if (!(total > 0)) {
+      return [];
+    }
+    return records.map((record, index) => {
+      const label = record.label ?? record.position ?? `Entry ${index + 1}`;
+      const rawValue = Number(record.value ?? record.count ?? record.total ?? 0);
+      const sanitized = Number.isFinite(rawValue) && rawValue > 0 ? rawValue : 0;
+      const percent = total > 0 ? (sanitized / total) * 100 : 0;
+      const width = percent > 0 ? Math.min(Math.max(percent, 6), 100) : 0;
+      return {
+        id: `union-${index}`,
+        label,
+        value: sanitized,
+        formattedValue: formatCount(sanitized),
+        percent,
+        width,
+      };
+    }).filter((entry) => entry.value > 0);
+  }, [unionPositionsSource, formatCount]);
+
+  const tenureStats = useMemo(() => {
+    const recordsBase = Array.isArray(tenurePrimarySource)
+      ? tenurePrimarySource
+      : Array.isArray(tenureFallbackSource)
+        ? tenureFallbackSource
+        : [];
+    if (!recordsBase.length) {
+      return [];
+    }
+    const total = recordsBase.reduce((acc, record) => {
+      const numeric = Number(record.value ?? record.count ?? 0);
+      return acc + (Number.isFinite(numeric) && numeric > 0 ? numeric : 0);
+    }, 0);
+    if (!(total > 0)) {
+      return [];
+    }
+    return recordsBase.map((record, index) => {
+      const label = record.label ?? `Bucket ${index + 1}`;
+      const rawValue = Number(record.value ?? record.count ?? 0);
+      const sanitized = Number.isFinite(rawValue) && rawValue > 0 ? rawValue : 0;
+      const percent = total > 0 ? (sanitized / total) * 100 : 0;
+      const width = percent > 0 ? Math.min(Math.max(percent, 6), 100) : 0;
+      return {
+        id: record.id ?? `tenure-${index}`,
+        label,
+        value: sanitized,
+        formattedValue: formatCount(sanitized),
+        percent,
+        width,
+      };
+    }).filter((entry) => entry.value > 0);
+  }, [tenurePrimarySource, tenureFallbackSource, formatCount]);
+
   const growthTrend = summary?.members?.growthTrend ?? [];
 
   const growthChartData = useMemo(() => {
@@ -128,42 +383,138 @@ export default function ReportsAnalytics() {
       return null;
     }
 
-    const totals = growthTrend.map((point) => Number(point.totalMembers ?? 0));
-    const newMembersSeries = growthTrend.map((point) => Number(point.newMembers ?? point.registrations ?? 0));
-    const maxValue = Math.max(1, ...totals, ...newMembersSeries);
-    const xDenominator = Math.max(growthTrend.length - 1, 1);
+    const sanitized = growthTrend.map((point) => ({
+      label: point.label ?? point.month,
+      total: Number(point.totalMembers ?? 0),
+      newMembers: Number(point.newMembers ?? point.registrations ?? 0),
+    }));
 
-    const toPoints = (series) => series
-      .map((value, index) => {
-        const x = (index / xDenominator) * 100;
-        const y = 100 - ((value / maxValue) * 100);
-        return `${x},${y}`;
-      })
-      .join(' ');
+    const ySections = 4;
+    const rawMax = Math.max(0, ...sanitized.map((item) => item.total), ...sanitized.map((item) => item.newMembers));
 
-    const gridSteps = 4;
-    const gridLines = Array.from({ length: gridSteps + 1 }, (_value, idx) => (idx / gridSteps) * 100);
+    const computeNiceScale = (value, sections) => {
+      const effectiveSections = sections > 0 ? sections : 4;
+      if (!Number.isFinite(value) || value <= 0) {
+        const fallbackMax = effectiveSections;
+        return { max: fallbackMax, step: fallbackMax / effectiveSections };
+      }
+
+      const niceNumber = (candidate, round = false) => {
+        const exponent = Math.floor(Math.log10(candidate));
+        const fraction = candidate / (10 ** exponent);
+        let niceFraction;
+
+        if (round) {
+          if (fraction < 1.5) niceFraction = 1;
+          else if (fraction < 3) niceFraction = 2;
+          else if (fraction < 7) niceFraction = 5;
+          else niceFraction = 10;
+        } else {
+          if (fraction <= 1) niceFraction = 1;
+          else if (fraction <= 2) niceFraction = 2;
+          else if (fraction <= 5) niceFraction = 5;
+          else niceFraction = 10;
+        }
+
+        return niceFraction * (10 ** exponent);
+      };
+
+      const niceMaxEstimate = niceNumber(value, false);
+      const tickSpacing = niceNumber(niceMaxEstimate / effectiveSections, true) || 1;
+      const niceMax = Math.ceil(value / tickSpacing) * tickSpacing;
+
+      return {
+        max: Math.max(tickSpacing, niceMax),
+        step: tickSpacing,
+      };
+    };
+
+    const { max: niceMax, step: yStep } = computeNiceScale(rawMax, ySections);
+    const denominator = niceMax > 0 ? niceMax : 1;
+    const xDenominator = Math.max(sanitized.length - 1, 1);
+
+    const padding = {
+      top: 12,
+      bottom: 12,
+    };
+    const horizontalPadding = sanitized.length > 1 ? 12 : 0;
+    const horizontalRange = 100 - (horizontalPadding * 2);
+    const effectiveHeight = 100 - padding.top - padding.bottom;
+    const projectValue = (value) => {
+      if (!Number.isFinite(value)) {
+        return padding.top + effectiveHeight;
+      }
+      const ratio = denominator > 0 ? value / denominator : 0;
+      const clampedRatio = clampValue(ratio, 0, 1);
+      return padding.top + (effectiveHeight * (1 - clampedRatio));
+    };
+
+    const points = sanitized.map((item, index) => {
+      const horizontal = sanitized.length === 1
+        ? 50
+        : horizontalPadding + ((index / xDenominator) * horizontalRange);
+      const totalPosition = projectValue(item.total);
+      const newPosition = projectValue(item.newMembers);
+      return {
+        index,
+        label: item.label,
+        total: item.total,
+        newMembers: item.newMembers,
+        x: horizontal,
+        totalY: Number.isFinite(totalPosition) ? totalPosition : 100,
+        newY: Number.isFinite(newPosition) ? newPosition : 100,
+        horizontal,
+      };
+    });
+
+    const totalsPolyline = points.map((point) => `${point.x},${point.totalY}`).join(' ');
+    const newPolyline = points.map((point) => `${point.x},${point.newY}`).join(' ');
+
+    const yTicks = Array.from({ length: ySections + 1 }, (_value, idx) => {
+      const value = yStep * idx;
+      const position = projectValue(value);
+      return {
+        value,
+        position,
+      };
+    });
+
+    const xTicks = points.map((point, index) => ({
+      position: point.x,
+      label: point.label,
+      isEdge: index === 0 || index === points.length - 1,
+    }));
+
+    const hitWidth = sanitized.length === 1 ? 100 : (horizontalRange / xDenominator);
+    const hitHalfWidth = sanitized.length === 1 ? 50 : (hitWidth / 2);
 
     return {
-      labels: growthTrend.map((point) => point.label ?? point.month),
-      maxValue,
-      totals,
-      newMembers: newMembersSeries,
-      totalsPoints: toPoints(totals),
-      newMembersPoints: toPoints(newMembersSeries),
-      gridLines,
+      maxValue: denominator,
+      points,
+      totalsPolyline,
+      newPolyline,
+      yTicks,
+      xTicks,
+      padding,
+      hitWidth,
+      hitHalfWidth,
+      horizontalPadding,
     };
   }, [growthTrend]);
+
+  useEffect(() => {
+    setGrowthHoverIndex(null);
+  }, [growthChartData]);
 
   const memberDistribution = useMemo(() => {
     const entries = summary?.members?.distribution ?? [];
     if (!entries.length) {
-      return { segments: [], pieStyle: null, total: 0 };
+      return { segments: [], total: 0 };
     }
     const palette = ['#2563eb', '#ef4444', '#22c55e', '#f97316', '#8b5cf6', '#6b7280', '#14b8a6', '#facc15'];
     const total = entries.reduce((acc, item) => acc + Number(item.count ?? 0), 0);
     if (!total) {
-      return { segments: [], pieStyle: null, total: 0 };
+      return { segments: [], total: 0 };
     }
 
     let cumulativePercent = 0;
@@ -182,14 +533,122 @@ export default function ReportsAnalytics() {
       };
     });
 
-    const pieStyle = {
-      background: `conic-gradient(${segments
-        .map((segment) => `${segment.color} ${segment.startDeg}deg ${segment.endDeg}deg`)
-        .join(', ')})`,
+    return { segments, total };
+  }, [summary]);
+
+  const distributionForDisplay = useMemo(() => {
+    if (selectedCompany === 'all' || !memberDistribution.segments.length) {
+      return memberDistribution;
+    }
+    const selectedKey = selectedCompany.toLowerCase();
+    const matchedSegment = memberDistribution.segments.find(
+      (segment) => (segment.company ?? '').toLowerCase() === selectedKey,
+    );
+    if (!matchedSegment) {
+      return { segments: [], total: 0 };
+    }
+    return {
+      segments: [{
+        ...matchedSegment,
+        percent: 100,
+        startDeg: 0,
+        endDeg: 360,
+      }],
+      total: matchedSegment.value,
+    };
+  }, [memberDistribution, selectedCompany]);
+
+  const distributionChartData = useMemo(() => {
+    const segments = distributionForDisplay.segments ?? [];
+    if (!segments.length) {
+      return null;
+    }
+
+    const totalValue = segments.reduce((acc, segment) => acc + Math.max(0, Number(segment.value ?? 0)), 0);
+    if (!(totalValue > 0)) {
+      return null;
+    }
+
+    const center = 100;
+    const outerRadius = 96;
+
+    const toCartesian = (angleDeg, radius) => {
+      const angleRad = ((angleDeg - 90) * Math.PI) / 180;
+      const x = center + (radius * Math.cos(angleRad));
+      const y = center + (radius * Math.sin(angleRad));
+      return {
+        x: Number(x.toFixed(3)),
+        y: Number(y.toFixed(3)),
+      };
     };
 
-    return { segments, pieStyle, total };
-  }, [summary]);
+    let angleCursor = -90;
+    const computedSegments = segments.map((segment) => {
+      const value = Math.max(0, Number(segment.value ?? 0));
+      const fraction = value > 0 ? value / totalValue : 0;
+      const sweep = fraction * 360;
+      const startAngle = angleCursor;
+      const endAngle = angleCursor + sweep;
+      angleCursor = endAngle;
+
+      const displayPercent = Number.isFinite(Number(segment.percent))
+        ? Number(segment.percent)
+        : fraction * 100;
+
+      if (sweep <= 0) {
+        return {
+          ...segment,
+          path: '',
+          centroid: { x: center, y: center },
+          tooltipPoint: { x: center, y: center },
+          startAngle,
+          endAngle,
+          sweep,
+          fraction,
+          midAngle: startAngle,
+          displayPercent,
+        };
+      }
+
+      const outerStart = toCartesian(startAngle, outerRadius);
+      const outerEnd = toCartesian(endAngle, outerRadius);
+      const largeArc = sweep > 180 ? 1 : 0;
+      const path = [
+        `M ${center} ${center}`,
+        `L ${outerStart.x} ${outerStart.y}`,
+        `A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+        'Z',
+      ].join(' ');
+
+      const midAngle = startAngle + (sweep / 2);
+      const centroidRadius = outerRadius * 0.6;
+      const tooltipRadius = outerRadius + 16;
+      const centroid = toCartesian(midAngle, centroidRadius);
+      const tooltipPoint = toCartesian(midAngle, tooltipRadius);
+
+      return {
+        ...segment,
+        path,
+        centroid,
+        tooltipPoint,
+        startAngle,
+        endAngle,
+        sweep,
+        fraction,
+        midAngle,
+        displayPercent,
+      };
+    });
+
+    return {
+      totalValue,
+      segments: computedSegments,
+    };
+  }, [distributionForDisplay]);
+
+  useEffect(() => {
+    setDistributionHoverIndex(null);
+  }, [distributionChartData]);
 
   const performanceHighlights = useMemo(() => {
     const toHighlights = (items) => (items ?? []).map((item) => ({
@@ -221,88 +680,576 @@ export default function ReportsAnalytics() {
     return () => { mounted = false; };
   }, []);
 
-  function currencyFormat(amount) {
-    return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(amount);
-  }
+  const handleTimeRangeChange = (event) => {
+    const value = event.target.value;
+    if (rangeShortLabels[value]) {
+      setTimeRange(value);
+    }
+  };
+
+  const handleCompanyChange = (event) => {
+    const value = event.target.value;
+    if (value === 'all' || companyOptions.includes(value)) {
+      setSelectedCompany(value);
+    }
+  };
+
+  const handleMembershipExport = async () => {
+    const params = { range: timeRange };
+    if (selectedCompany !== 'all') {
+      params.company = selectedCompany;
+    }
+
+    try {
+      setIsExportingMembership(true);
+      const response = await api.exportMembershipReport(params);
+      const contentType = response.headers?.['content-type'] ?? 'text/csv';
+      const blob = response.data instanceof Blob ? response.data : new Blob([response.data], { type: contentType });
+      const url = window.URL.createObjectURL(blob);
+      const tempLink = document.createElement('a');
+      tempLink.href = url;
+      const companySlug = selectedCompany === 'all'
+        ? 'all'
+        : selectedCompany.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'selection';
+      tempLink.download = `membership-report-${timeRange}-${companySlug}.csv`;
+      tempLink.click();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Unable to export membership report', error);
+    } finally {
+      setIsExportingMembership(false);
+    }
+  };
 
   // membership & finance highlights are data-driven where possible; default to empty/placeholder
   const membershipHighlights = performanceHighlights.membership;
   const financialHighlights = performanceHighlights.financial;
   const operationsHighlights = performanceHighlights.operations;
-
-  const registrationKPIs = [
-    { label: "Avg processing time", value: "2.3 days" },
-    { label: "Approval rate", value: "94%" },
-    { label: "Pending reviews", value: "47" },
-    { label: "Duplicate detections", value: "3 (6.4%)" },
-  ];
-
-  const topKpis = useMemo(() => {
-    const membersTotal = summary?.members?.total;
-    const newJoiners30d = summary?.members?.newJoiners30d;
-    const membersGrowthPercent = summary?.members?.growthPercent;
-
-    const revenueYtd = summary?.financial?.revenueYtd;
-    const revenuePrevYear = summary?.financial?.revenuePrevYear;
-    const revenueYoYPercent = summary?.financial?.revenueYoYPercent ?? (
-      revenuePrevYear > 0 && revenueYtd != null
-        ? ((revenueYtd - revenuePrevYear) / revenuePrevYear) * 100
-        : null
+  const financialPrimaryStats = useMemo(() => {
+    const monthlyCollections = summary?.financial?.monthlyCollections;
+    const monthlyCollectionsPrev = summary?.financial?.monthlyCollectionsPrev;
+    const collectedYtd = summary?.financial?.collectedYtd ?? summary?.financial?.revenueYtd;
+    const revenueYoYPercent = summary?.financial?.revenueYoYPercent;
+    const outstandingDues = pickFirstFinite(
+      summary?.dues?.arrears,
+      summary?.financial?.outstandingDues,
     );
-
+    const overdueMembers = summary?.dues?.overdueMembers;
+    const overdueEntries = summary?.dues?.overdueEntries;
     const collectionRate = summary?.financial?.collectionRate;
     const collectionNote = summary?.financial?.collectionNote;
 
-    const activeCompanies = summary?.members?.activeEmployers;
-    const payingEmployers = summary?.members?.payingEmployers;
-
-    const normalizeCurrency = (value) => {
-      const numeric = Number(value);
-      return Number.isFinite(numeric) ? currencyFormat(numeric) : '—';
+    const percentChange = (current, previous) => {
+      const currentValue = toFiniteNumber(current);
+      const previousValue = toFiniteNumber(previous);
+      if (currentValue == null || previousValue == null) {
+        return null;
+      }
+      if (previousValue === 0) {
+        if (currentValue === 0) {
+          return 0;
+        }
+        return currentValue > 0 ? 100 : -100;
+      }
+      return ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
     };
 
-    const normalizePercent = (value, fallback = '—') => {
-      const numeric = Number(value);
-      if (!Number.isFinite(numeric)) {
-        return fallback;
+    const formatDeltaPercent = (value) => {
+      if (!Number.isFinite(value)) {
+        return null;
       }
-      const rounded = numeric.toFixed(1);
-      const sign = numeric > 0 ? '+' : '';
+      const absValue = Math.abs(value);
+      const decimals = absValue >= 10 ? 0 : 1;
+      const rounded = absValue.toFixed(decimals);
+      const sign = value > 0 ? '+' : value < 0 ? '-' : '';
       return `${sign}${rounded}%`;
     };
 
-    const membersDelta = (() => {
-      if (Number.isFinite(membersGrowthPercent)) {
-        return `${membersGrowthPercent >= 0 ? '+' : ''}${membersGrowthPercent.toFixed(1)}% vs prior 30d`;
+    const monthsElapsed = Math.max(new Date().getMonth() + 1, 1);
+    const averageMonthly = (() => {
+      const total = toFiniteNumber(collectedYtd);
+      if (total == null || monthsElapsed <= 0) {
+        return null;
       }
-      if (Number.isFinite(newJoiners30d)) {
+      return total / monthsElapsed;
+    })();
+
+    const monthDelta = percentChange(monthlyCollections, monthlyCollectionsPrev);
+    const monthAvgDelta = percentChange(monthlyCollections, averageMonthly);
+    const monthMeta = (() => {
+      const baselineDelta = Number.isFinite(monthDelta) ? monthDelta : monthAvgDelta;
+      if (Number.isFinite(baselineDelta)) {
+        const basisLabel = Number.isFinite(monthDelta) ? 'vs prior 30d' : 'vs avg month';
+        const formatted = formatDeltaPercent(baselineDelta);
+        return formatted ? `${formatted} ${basisLabel}` : 'Collections recorded';
+      }
+      if (toFiniteNumber(monthlyCollections) != null) {
+        return 'Collections recorded';
+      }
+      return 'No month-to-date data yet';
+    })();
+
+    const ytdMeta = (() => {
+      const yoyDelta = toFiniteNumber(revenueYoYPercent);
+      if (Number.isFinite(yoyDelta)) {
+        const formatted = formatDeltaPercent(yoyDelta);
+        return formatted ? `${formatted} vs last year` : 'Year-over-year steady';
+      }
+      if (toFiniteNumber(collectedYtd) != null) {
+        return 'Tracking current fiscal year';
+      }
+      return 'Year-to-date totals unavailable';
+    })();
+
+    const outstandingMeta = (() => {
+      const overdueMembersValue = toFiniteNumber(overdueMembers);
+      const overdueEntriesValue = toFiniteNumber(overdueEntries);
+      const arrearsValue = toFiniteNumber(outstandingDues);
+      if (Number.isFinite(overdueMembersValue) && overdueMembersValue > 0) {
+        return `${formatCount(overdueMembersValue)} members behind on dues`;
+      }
+      if (Number.isFinite(overdueEntriesValue) && overdueEntriesValue > 0) {
+        return `${formatCount(overdueEntriesValue)} overdue ledger items`;
+      }
+      if (arrearsValue === 0) {
+        return 'All accounts current';
+      }
+      if (Number.isFinite(arrearsValue) && arrearsValue > 0) {
+        return 'Arrears detected';
+      }
+      return 'No arrears recorded';
+    })();
+
+    const collectionMeta = (() => {
+      if (collectionNote) {
+        return collectionNote;
+      }
+      if (Number.isFinite(collectionRate)) {
+        if (collectionRate >= 95) return 'Above target';
+        if (collectionRate >= 85) return 'On track';
+        return 'Needs attention';
+      }
+      return 'Collection performance unavailable';
+    })();
+
+    return [
+      {
+        id: 'month',
+        label: 'This month',
+        value: monthlyCollections,
+        format: 'currency',
+        meta: monthMeta,
+      },
+      {
+        id: 'ytd',
+        label: 'Year to date',
+        value: collectedYtd,
+        format: 'currency',
+        meta: ytdMeta,
+      },
+      {
+        id: 'outstanding',
+        label: 'Outstanding',
+        value: outstandingDues,
+        format: 'currency',
+        meta: outstandingMeta,
+      },
+      {
+        id: 'collection-rate',
+        label: 'Collection rate',
+        value: collectionRate,
+        format: 'percent',
+        meta: collectionMeta,
+      },
+    ];
+  }, [summary]);
+
+  const duesCollectionSeries = useMemo(() => {
+    const source = Array.isArray(summary?.financial?.collectionSeries)
+      ? summary.financial.collectionSeries
+      : [];
+    return source.map((entry, index) => {
+      const monthKey = typeof entry?.month === 'string' ? entry.month : null;
+      let label = entry?.label;
+      if (!label && monthKey) {
+        const parsed = new Date(monthKey);
+        if (!Number.isNaN(parsed.getTime())) {
+          label = parsed.toLocaleString('en-US', { month: 'short' });
+        }
+      }
+      if (!label) {
+        label = `M${index + 1}`;
+      }
+      const collectedRaw = Number(entry?.collected ?? entry?.value ?? 0);
+      const billedRaw = Number(entry?.billed ?? entry?.target ?? 0);
+      return {
+        id: monthKey ?? `collection-${index}`,
+        month: monthKey,
+        label,
+        collected: Number.isFinite(collectedRaw) ? Math.max(collectedRaw, 0) : 0,
+        billed: Number.isFinite(billedRaw) ? Math.max(billedRaw, 0) : 0,
+      };
+    });
+  }, [summary]);
+
+  const collectionDiagnostics = summary?.financial?.collectionDiagnostics ?? null;
+
+  const collectionNotice = useMemo(() => {
+    if (!collectionDiagnostics) {
+      return null;
+    }
+    if (collectionDiagnostics.fallbackApplied) {
+      return collectionDiagnostics.fallbackReason
+        || 'Showing sample dues collection trend while we wait for live data.';
+    }
+    if (Array.isArray(collectionDiagnostics.issues) && collectionDiagnostics.issues.length) {
+      return collectionDiagnostics.issues[0];
+    }
+    const noActivity = (collectionDiagnostics.paymentsPeriods ?? 0) === 0
+      && (collectionDiagnostics.ledgerPeriods ?? 0) === 0;
+    if (noActivity) {
+      return 'No dues payments or billing activity returned by the analytics API.';
+    }
+    return null;
+  }, [collectionDiagnostics]);
+
+  const collectionNoticeTone = (collectionDiagnostics?.fallbackApplied
+    || (Array.isArray(collectionDiagnostics?.issues) && collectionDiagnostics.issues.length))
+    ? 'warning'
+    : 'info';
+
+  const duesCollectionChart = useMemo(() => {
+    if (!duesCollectionSeries.length) {
+      return null;
+    }
+    const collectedValues = duesCollectionSeries.map((item) => item.collected ?? 0);
+    const billedValues = duesCollectionSeries.map((item) => item.billed ?? 0);
+    const peak = Math.max(0, ...collectedValues, ...billedValues);
+    if (!(peak > 0)) {
+      return null;
+    }
+    const axis = computeAxisScale(peak, 4);
+    const safeStep = axis.step > 0 ? axis.step : Math.max(axis.max / 4, 1);
+    const safeMaxCandidate = axis.max > 0 ? axis.max : peak;
+    const safeMax = Math.max(safeMaxCandidate, safeStep);
+    const tickCount = Math.ceil(safeMax / safeStep);
+    const ticks = Array.from({ length: tickCount + 1 }, (_value, index) => {
+      const tickValue = Math.min(safeMax, index * safeStep);
+      const percent = safeMax > 0 ? (tickValue / safeMax) * 100 : 0;
+      return {
+        value: tickValue,
+        percent,
+        label: formatPesoCompact(tickValue),
+      };
+    });
+    const series = duesCollectionSeries.map((item) => ({
+      ...item,
+      collectedPercent: safeMax > 0 ? Math.min((item.collected / safeMax) * 100, 100) : 0,
+      billedPercent: safeMax > 0 ? Math.min((item.billed / safeMax) * 100, 100) : 0,
+    }));
+    return {
+      max: safeMax,
+      step: safeStep,
+      ticks,
+      series,
+    };
+  }, [duesCollectionSeries]);
+
+  const collectionSeriesLength = duesCollectionChart?.series?.length ?? 0;
+
+  const collectionTooltip = useMemo(() => {
+    if (!duesCollectionChart || collectionHoverIndex == null) {
+      return null;
+    }
+    const seriesItem = duesCollectionChart.series[collectionHoverIndex];
+    if (!seriesItem) {
+      return null;
+    }
+    const basePercent = collectionSeriesLength > 0
+      ? ((collectionHoverIndex + 0.5) / collectionSeriesLength) * 100
+      : 50;
+    const left = Math.min(94, Math.max(6, basePercent));
+    return {
+      item: seriesItem,
+      left,
+    };
+  }, [duesCollectionChart, collectionHoverIndex, collectionSeriesLength]);
+
+  useEffect(() => {
+    setCollectionHoverIndex(null);
+  }, [collectionSeriesLength]);
+
+  const financialCollectionBadges = useMemo(() => {
+    const badges = [];
+
+    const collectionRateValue = toFiniteNumber(summary?.financial?.collectionRate);
+    if (collectionRateValue != null) {
+      const digits = Math.abs(collectionRateValue) >= 10 ? 0 : 1;
+      badges.push({
+        label: 'Target attainment',
+        value: `${collectionRateValue >= 0 ? '' : '-'}${Math.abs(collectionRateValue).toFixed(digits)}%`,
+      });
+    }
+
+    const collectedYtdValue = toFiniteNumber(summary?.financial?.collectedYtd ?? summary?.financial?.revenueYtd);
+    const billedYtdValue = toFiniteNumber(summary?.financial?.billedYtd);
+    if (collectedYtdValue != null && billedYtdValue != null) {
+      const variance = collectedYtdValue - billedYtdValue;
+      const variancePrefix = variance >= 0 ? '+' : '-';
+      const varianceFormatted = formatPesoCompact(Math.abs(variance));
+      badges.push({
+        label: 'Variance',
+        value: `${variancePrefix}${varianceFormatted}`,
+      });
+    }
+
+    const monthlyCollectionsValue = toFiniteNumber(summary?.financial?.monthlyCollections);
+    const monthlyCollectionsPrevValue = toFiniteNumber(summary?.financial?.monthlyCollectionsPrev);
+    if (monthlyCollectionsValue != null && monthlyCollectionsPrevValue != null && monthlyCollectionsPrevValue !== 0) {
+      const change = ((monthlyCollectionsValue - monthlyCollectionsPrevValue) / Math.abs(monthlyCollectionsPrevValue)) * 100;
+      const digits = Math.abs(change) >= 10 ? 0 : 1;
+      const prefix = change >= 0 ? '+' : '-';
+      badges.push({
+        label: 'MoM change',
+        value: `${prefix}${Math.abs(change).toFixed(digits)}%`,
+      });
+    }
+
+    return badges;
+  }, [summary]);
+
+  const financialTopCompanies = useMemo(() => {
+    const rawEntries = Array.isArray(summary?.financial?.topCompanies)
+      ? summary.financial.topCompanies
+      : [];
+
+    const normalized = rawEntries
+      .map((entry) => {
+        const company = entry.company ?? 'Unspecified';
+        const collected = toFiniteNumber(entry.collected ?? entry.amount ?? 0) ?? 0;
+        const billed = toFiniteNumber(entry.billed ?? entry.target);
+        const rateSource = toFiniteNumber(entry.collectionRate ?? entry.rate);
+        const computedRate = billed && billed > 0
+          ? (collected / billed) * 100
+          : rateSource;
+        const members = toFiniteNumber(entry.members ?? entry.memberCount ?? entry.totalMembers);
+        return {
+          company,
+          collected,
+          billed,
+          collectionRate: computedRate,
+          members,
+        };
+      })
+      .filter((entry) => Number.isFinite(entry.collected) || Number.isFinite(entry.billed));
+
+    const maxCollected = normalized.reduce(
+      (accumulator, entry) => Math.max(accumulator, entry.collected ?? 0),
+      0,
+    );
+
+    return {
+      items: normalized,
+      maxCollected,
+    };
+  }, [summary]);
+
+  const paymentMethodStats = useMemo(() => {
+    const fallback = [
+      { label: 'Payroll Deduction', amount: 4700000 },
+      { label: 'Bank Transfer', amount: 1800000 },
+      { label: 'Check Payment', amount: 580000 },
+      { label: 'Cash', amount: 145000 },
+    ];
+
+    const rawEntries = summary?.financial?.paymentMethods ?? [];
+    const sourceEntries = rawEntries.length ? rawEntries : (summary?.meta?.isSample ? fallback : []);
+
+    const normalized = sourceEntries
+      .map((entry) => {
+        const label = entry.label ?? entry.method ?? 'Unspecified';
+        const value = Number(entry.amount ?? entry.value ?? 0);
+        if (!Number.isFinite(value) || value < 0) {
+          return null;
+        }
+        const key = typeof entry.method === 'string' && entry.method
+          ? entry.method
+          : label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        return { key, label, value };
+      })
+      .filter(Boolean);
+
+    const total = normalized.reduce((acc, item) => acc + item.value, 0);
+
+    const items = normalized.map((item) => ({
+      key: item.key,
+      label: item.label,
+      amount: item.value,
+      percent: total > 0 ? (item.value / total) * 100 : 0,
+      formattedAmount: formatCurrency(item.value),
+    }));
+
+    const maxValue = normalized.reduce((acc, item) => Math.max(acc, item.value), 0);
+
+    return {
+      items,
+      total,
+      maxValue,
+    };
+  }, [summary]);
+
+  const operationsPrimaryStats = useMemo(() => {
+    const operations = performanceHighlights.operations ?? [];
+    const findOperation = (keyword) => operations.find((item) => item.label?.toLowerCase().includes(keyword));
+
+    const totalMembers = Number(summary?.members?.total ?? summary?.members?.totalAllStatuses);
+    const physical = findOperation('physical');
+    const physicalValue = Number(physical?.value ?? summary?.performance?.operations?.[0]?.value);
+    const physicalMeta = Number.isFinite(physicalValue) && Number.isFinite(totalMembers) && totalMembers > 0
+      ? `${((physicalValue / totalMembers) * 100).toFixed(1)}% of members`
+      : (physical?.meta ?? '—');
+
+    const assistanceValueRaw = Number(summary?.benefits?.approved ?? findOperation('assistance')?.value);
+    const totalDisbursed = summary?.benefits?.totalDisbursed;
+    const assistanceMeta = Number.isFinite(totalDisbursed)
+      ? `${formatPesoCompact(totalDisbursed)} disbursed`
+      : (findOperation('assistance')?.meta ?? '—');
+
+    const eventsTotalRaw = Number(summary?.events?.total ?? findOperation('events')?.value);
+    const attendanceRate = summary?.events?.attendanceRate;
+    const eventsMeta = Number.isFinite(attendanceRate)
+      ? `${attendanceRate.toFixed(0)}% avg attendance`
+      : (findOperation('events')?.meta ?? '0% avg attendance');
+
+    return [
+      {
+        id: 'physical-cards',
+        label: 'Physical Cards',
+        value: Number.isFinite(physicalValue) ? physicalValue : null,
+        format: 'count',
+        meta: physicalMeta,
+        metaColor: 'text-blue',
+      },
+      {
+        id: 'assistance-beneficiaries',
+        label: 'Assistance Beneficiaries',
+        value: Number.isFinite(assistanceValueRaw) ? assistanceValueRaw : null,
+        format: 'count',
+        meta: assistanceMeta,
+        metaColor: 'text-green',
+      },
+      {
+        id: 'events-this-year',
+        label: 'Events This Year',
+        value: Number.isFinite(eventsTotalRaw) ? eventsTotalRaw : null,
+        format: 'count',
+        meta: eventsMeta,
+        metaColor: 'text-green',
+      },
+    ];
+  }, [performanceHighlights.operations, summary]);
+
+  const performanceSections = [
+    {
+      id: 'membership',
+      title: 'Membership Metrics',
+      items: membershipHighlights,
+      emptyLabel: 'No membership KPIs yet.',
+    },
+    {
+      id: 'financial',
+      title: 'Financial Performance',
+      items: financialHighlights,
+      emptyLabel: 'No financial KPIs yet.',
+    },
+    {
+      id: 'operations',
+      title: 'Operations',
+      items: operationsHighlights,
+      emptyLabel: 'No operations KPIs yet.',
+    },
+  ];
+
+
+  const topKpis = useMemo(() => {
+    const membersTotal = toFiniteNumber(summary?.members?.total);
+    const newJoiners30d = toFiniteNumber(summary?.members?.newJoiners30d);
+    const membersGrowthPercent = toFiniteNumber(summary?.members?.growthPercent);
+
+    const revenueYtd = toFiniteNumber(summary?.financial?.revenueYtd ?? summary?.financial?.collectedYtd);
+    const revenuePrevYear = toFiniteNumber(summary?.financial?.revenuePrevYear);
+    const computedRevenueYoY = (() => {
+      if (revenuePrevYear != null && revenuePrevYear > 0 && revenueYtd != null) {
+        return ((revenueYtd - revenuePrevYear) / revenuePrevYear) * 100;
+      }
+      return null;
+    })();
+    const revenueYoYPercent = toFiniteNumber(summary?.financial?.revenueYoYPercent ?? computedRevenueYoY);
+
+    const collectionRate = toFiniteNumber(summary?.financial?.collectionRate);
+    const collectionNote = summary?.financial?.collectionNote;
+
+    const activeCompanies = toFiniteNumber(summary?.members?.activeEmployers);
+    const payingEmployers = toFiniteNumber(summary?.members?.payingEmployers);
+    const companiesValueNumber = activeCompanies ?? payingEmployers;
+
+    const formatCurrencyMaybe = (value) => (value != null ? formatCurrency(value) : '—');
+
+    const membersDelta = (() => {
+      if (membersGrowthPercent != null) {
+        const sign = membersGrowthPercent >= 0 ? '+' : '';
+        return `${sign}${membersGrowthPercent.toFixed(1)}% vs prior 30d`;
+      }
+      if (newJoiners30d != null) {
         return `+${formatCount(newJoiners30d)} in last 30 days`;
       }
       return '—';
     })();
 
-    const revenueDelta = normalizePercent(revenueYoYPercent, revenuePrevYear ? '0% vs last year' : '—')
-      .replace('NaN', '—');
+    const revenueDelta = (() => {
+      if (revenueYoYPercent != null) {
+        const sign = revenueYoYPercent >= 0 ? '+' : '-';
+        return `${sign}${Math.abs(revenueYoYPercent).toFixed(1)}% vs last year`;
+      }
+      if (revenuePrevYear != null && revenuePrevYear > 0) {
+        return '0% vs last year';
+      }
+      return '—';
+    })();
 
     const collectionDelta = (() => {
       if (collectionNote) {
         return collectionNote;
       }
-      if (Number.isFinite(collectionRate)) {
-        return collectionRate >= 95 ? 'Above target' : collectionRate >= 85 ? 'On track' : 'Needs attention';
+      if (collectionRate != null) {
+        if (collectionRate >= 95) return 'Above target';
+        if (collectionRate >= 85) return 'On track';
+        return 'Needs attention';
       }
       return '—';
     })();
 
     const companiesDelta = (() => {
-      if (Number.isFinite(payingEmployers) && payingEmployers > 0) {
+      if (payingEmployers != null && payingEmployers > 0) {
         return `${formatCount(payingEmployers)} remitting this year`;
       }
-      if (Number.isFinite(activeCompanies) && activeCompanies > 0) {
+      if (activeCompanies != null && activeCompanies > 0) {
         return 'Distinct employers represented';
       }
       return '—';
     })();
+
+    const membersTone = membersGrowthPercent != null
+      ? (membersGrowthPercent >= 0 ? 'positive' : 'negative')
+      : 'neutral';
+
+    const revenueTone = revenueYoYPercent != null
+      ? (revenueYoYPercent >= 0 ? 'positive' : 'negative')
+      : 'neutral';
+
+    const collectionTone = collectionRate != null
+      ? (collectionRate >= 90 ? 'positive' : collectionRate >= 75 ? 'neutral' : 'negative')
+      : 'neutral';
 
     return [
       {
@@ -310,31 +1257,39 @@ export default function ReportsAnalytics() {
         label: 'Total Members',
         value: formatCount(membersTotal),
         delta: membersDelta,
-        tone: 'positive',
+        tone: membersTone,
       },
       {
         id: 'revenue',
         label: 'Revenue (YTD)',
-        value: normalizeCurrency(revenueYtd),
+        value: formatCurrencyMaybe(revenueYtd),
         delta: revenueDelta,
-        tone: 'positive',
+        tone: revenueTone,
       },
       {
         id: 'collection',
         label: 'Collection Rate',
-        value: normalizePercent(collectionRate, '—').replace('NaN', '—'),
+        value: collectionRate != null ? `${collectionRate.toFixed(1)}%` : '—',
         delta: collectionDelta,
-        tone: Number.isFinite(collectionRate) && collectionRate >= 90 ? 'positive' : 'neutral',
+        tone: collectionTone,
       },
       {
         id: 'companies',
         label: 'Active Companies',
-        value: formatCount(activeCompanies),
+        value: formatCount(companiesValueNumber),
         delta: companiesDelta,
         tone: 'neutral',
       },
     ];
   }, [summary]);
+
+
+  const registrationKPIs = [
+    { label: "Avg processing time", value: "2.3 days" },
+    { label: "Approval rate", value: "94%" },
+    { label: "Pending reviews", value: "47" },
+    { label: "Duplicate detections", value: "3 (6.4%)" },
+  ];
 
   return (
     <div className="admin-page admin-stack-xl reports-page">
@@ -356,11 +1311,12 @@ export default function ReportsAnalytics() {
         </div>
       </section>
 
-      {summary?.meta?.isSample ? (
-        <div className="admin-alert admin-alert--info">
-          Displaying sample analytics until live data is available.
+      {overviewAlert ? (
+        <div className={`admin-alert admin-alert--${overviewAlert.type}`}>
+          {overviewAlert.message}
         </div>
       ) : null}
+
 
       <div className="reports-tab-strip">
         {tabs.map((tab) => (
@@ -383,7 +1339,7 @@ export default function ReportsAnalytics() {
                   <article key={kpi.id} className="reports-kpi-card">
                     <span className="reports-kpi-card__label">{kpi.label}</span>
                     <strong className="reports-kpi-card__value">{kpi.value}</strong>
-                    <span className={`reports-kpi-card__delta ${kpi.tone === 'positive' ? 'is-positive' : ''}`}>
+                    <span className={`reports-kpi-card__delta ${kpi.tone === 'positive' ? 'is-positive' : kpi.tone === 'negative' ? 'is-negative' : ''}`}>
                       {kpi.delta}
                     </span>
                   </article>
@@ -400,40 +1356,178 @@ export default function ReportsAnalytics() {
                     </div>
                   </header>
                   {growthChartData ? (
-                    <div className="reports-line-chart">
-                      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-                        {growthChartData.gridLines.map((y, index) => (
-                          <line key={`grid-${y}-${index}`} x1="0" x2="100" y1={y} y2={y} className="reports-line-chart__grid" />
+                    <div className="reports-growth-card">
+                      <div className="reports-line-chart reports-line-chart--growth">
+                        <div className="reports-line-chart__frame">
+                        <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                          {growthChartData.yTicks.map((tick, index) => (
+                            index === 0 ? null : (
+                              <line
+                                key={`h-grid-${index}`}
+                                x1="0"
+                                x2="100"
+                                y1={tick.position}
+                                y2={tick.position}
+                                className="reports-line-chart__grid is-horizontal"
+                              />
+                            )
+                          ))}
+                          {growthChartData.xTicks.map((tick, index) => (
+                            tick.isEdge ? null : (
+                              <line
+                                key={`v-grid-${index}`}
+                                y1="0"
+                                y2="100"
+                                x1={tick.position}
+                                x2={tick.position}
+                                className="reports-line-chart__grid is-vertical"
+                              />
+                            )
+                          ))}
+                          <polyline points="0,0 0,100 100,100" className="reports-line-chart__axis" />
+                          <polyline points={growthChartData.totalsPolyline} className="reports-line-chart__series is-total" />
+                          <polyline points={growthChartData.newPolyline} className="reports-line-chart__series is-new" />
+                          {growthHoverIndex != null ? (
+                            <line
+                              x1={growthChartData.points[growthHoverIndex].x}
+                              x2={growthChartData.points[growthHoverIndex].x}
+                              y1="0"
+                              y2="100"
+                              className="reports-line-chart__cursor"
+                            />
+                          ) : null}
+                          {growthChartData.points.map((point, index) => {
+                            const isActive = growthHoverIndex === index;
+                            return (
+                              <g key={`points-${point.label}`}>
+                                <circle
+                                  cx={point.x}
+                                  cy={point.totalY}
+                                  r={isActive ? 2.3 : 1.7}
+                                  className={`reports-line-chart__point ${isActive ? 'is-active' : ''}`}
+                                />
+                                <circle
+                                  cx={point.x}
+                                  cy={point.newY}
+                                  r={isActive ? 2.1 : 1.5}
+                                  className={`reports-line-chart__point is-new ${isActive ? 'is-active' : ''}`}
+                                />
+                              </g>
+                            );
+                          })}
+                        </svg>
+
+                        {growthChartData.points.map((point, index) => (
+                          <button
+                            key={`hit-${point.label}`}
+                            type="button"
+                            className="reports-line-chart__hit"
+                              style={{
+                                left: `${clampValue(point.x - growthChartData.hitHalfWidth, 0, 100 - growthChartData.hitWidth)}%`,
+                                width: `${growthChartData.hitWidth}%`,
+                              }}
+                            onMouseEnter={() => setGrowthHoverIndex(index)}
+                            onMouseMove={() => setGrowthHoverIndex(index)}
+                            onFocus={() => setGrowthHoverIndex(index)}
+                            onMouseLeave={() => setGrowthHoverIndex(null)}
+                            onBlur={() => setGrowthHoverIndex(null)}
+                            aria-label={`Show metrics for ${point.label}`}
+                          />
                         ))}
-                        <polyline points={growthChartData.totalsPoints} className="reports-line-chart__series is-total" />
-                        <polyline points={growthChartData.newMembersPoints} className="reports-line-chart__series is-new" />
-                      </svg>
-                      <div className="reports-line-chart__legend">
-                        <span><span className="reports-line-chart__dot is-total" /> Members</span>
-                        <span><span className="reports-line-chart__dot is-new" /> New joiners</span>
+
+                        {growthHoverIndex != null ? (
+                          (() => {
+                            const point = growthChartData.points[growthHoverIndex];
+                            const horizontalPadding = growthChartData.horizontalPadding ?? 0;
+                            const leftClampMin = horizontalPadding + 4;
+                            const leftClampMax = 100 - horizontalPadding - 4;
+                            const tooltipLeft = clampValue(point.x, leftClampMin, leftClampMax);
+                            const alignment = point.x >= 75
+                              ? 'is-right'
+                              : point.x <= 25
+                                ? 'is-left'
+                                : 'is-center';
+                            const padTop = growthChartData.padding.top;
+                            const padBottom = growthChartData.padding.bottom;
+                            const rawTooltipY = Math.min(point.totalY, point.newY) - 10;
+                            const isTop = rawTooltipY < 15;
+                            const tooltipY = clampValue(
+                              rawTooltipY,
+                              padTop + 2,
+                              100 - padBottom - 6,
+                            );
+                            return (
+                              <div
+                                key="tooltip"
+                                className={`reports-line-chart__tooltip ${alignment} ${isTop ? 'is-bottom' : ''}`}
+                                style={{ left: `${tooltipLeft}%`, top: `${tooltipY}%` }}
+                              >
+                                <div className="reports-line-chart__tooltip-label">{point.label}</div>
+                                <div className="reports-line-chart__tooltip-row is-total">
+                                  <span>Total Members</span>
+                                  <strong>{formatCount(point.total)}</strong>
+                                </div>
+                                <div className="reports-line-chart__tooltip-row is-new">
+                                  <span>New Members</span>
+                                  <strong>{formatCount(point.newMembers)}</strong>
+                                </div>
+                              </div>
+                            );
+                          })()
+                        ) : null}
+
+                        {growthChartData.yTicks.map((tick, index) => {
+                          const padTop = growthChartData.padding.top;
+                          const padBottom = growthChartData.padding.bottom;
+                          const labelPosition = clampValue(
+                            tick.position,
+                            padTop + 2,
+                            100 - padBottom - 2,
+                          );
+                          return (
+                            <span
+                              key={`tick-label-${index}`}
+                              className="reports-line-chart__ytick"
+                              style={{ top: `${labelPosition}%` }}
+                            >
+                              {formatCount(tick.value)}
+                            </span>
+                          );
+                        })}
+                        </div>
+                        <div className="reports-line-chart__legend">
+                          <span><span className="reports-line-chart__dot is-total" /> Members</span>
+                          <span><span className="reports-line-chart__dot is-new" /> New joiners</span>
+                        </div>
+                        <div
+                          className="reports-line-chart__labels"
+                          style={{ gridTemplateColumns: `repeat(${growthChartData.points.length}, minmax(40px, 1fr))` }}
+                        >
+                          {growthChartData.points.map((point) => (
+                            <span key={`label-${point.label}`}>{point.label}</span>
+                          ))}
+                        </div>
                       </div>
-                      <div className="reports-line-chart__labels">
-                        {growthTrend.map((point) => (
-                          <span key={point.month}>{point.label ?? point.month}</span>
-                        ))}
+                      <div className="reports-growth-card__footer">
+                        <div className="reports-growth-pill is-members">
+                          <span className="reports-growth-pill__label">TOTAL MEMBERS</span>
+                          <span className="reports-growth-pill__value">{formatCount(totalMembersValue)}</span>
+                          {totalMembersMeta ? (
+                            <span className="reports-growth-pill__meta">{totalMembersMeta}</span>
+                          ) : null}
+                        </div>
+                        <div className="reports-growth-pill is-joiners">
+                          <span className="reports-growth-pill__label">NEW JOINERS (LAST 30 DAYS)</span>
+                          <span className="reports-growth-pill__value">{newJoinersValue != null ? formatCount(newJoinersValue) : '—'}</span>
+                          {newJoinersMetaChange ? (
+                            <span className="reports-growth-pill__meta">{newJoinersMetaChange}</span>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   ) : (
                     <div className="admin-empty-state is-minimal">No member growth data yet.</div>
                   )}
-                  <div className="admin-inline-list">
-                    <span>
-                      Total members: {formatCount(summary?.members?.total)}
-                      {summary?.members?.retentionRate != null ? ` (${formatPercent(summary.members.retentionRate)})` : ''}
-                    </span>
-                    <span>
-                      New joiners ({selectedRangeShort}): {newJoinersValue != null ? formatCount(newJoinersValue) : '—'}
-                      {summary?.members?.newJoinersChange != null ? ` (${summary.members.newJoinersChange >= 0 ? '+' : ''}${Math.abs(Number(summary.members.newJoinersChange)).toFixed(1)}% vs prior)` : ''}
-                    </span>
-                    <span>
-                      Growth vs prior 30d: {summary?.members?.growthPercent != null ? `${summary.members.growthPercent >= 0 ? '+' : ''}${Math.abs(Number(summary.members.growthPercent)).toFixed(1)}%` : '—'}
-                    </span>
-                  </div>
                 </article>
 
                 <article className="admin-card admin-stack-md">
@@ -444,23 +1538,86 @@ export default function ReportsAnalytics() {
                       <p className="admin-muted">Breakdown by employer segments.</p>
                     </div>
                   </header>
-                  {memberDistribution.segments.length ? (
+                  {distributionChartData ? (
                     <div className="reports-pie-card">
-                      <div className="reports-pie-card__chart" style={memberDistribution.pieStyle}>
-                        <div className="reports-pie-card__chart-overlay">
-                          <strong>{formatCount(memberDistribution.total)}</strong>
-                          <span>Total</span>
-                        </div>
+                      <div
+                        className="reports-pie-card__chart"
+                        onMouseLeave={() => setDistributionHoverIndex(null)}
+                      >
+                        <svg
+                          className="reports-pie-chart__svg"
+                          viewBox="0 0 200 200"
+                          preserveAspectRatio="xMidYMid meet"
+                        >
+                          {distributionChartData.segments.map((segment, index) => {
+                            if (!segment.path) {
+                              return null;
+                            }
+                            const isActive = distributionHoverIndex === index;
+                            const companyName = segment.company ?? 'Unspecified';
+                            const accessibleLabel = `${companyName}: ${formatCount(segment.value)} members (${segment.displayPercent.toFixed(1)}%)`;
+                            return (
+                              <path
+                                key={segment.company ?? index}
+                                d={segment.path}
+                                fill={segment.color}
+                                className={`reports-pie-chart__segment ${isActive ? 'is-hovered' : ''}`}
+                                tabIndex={0}
+                                role="button"
+                                aria-label={accessibleLabel}
+                                onMouseEnter={() => setDistributionHoverIndex(index)}
+                                onMouseMove={() => setDistributionHoverIndex(index)}
+                                onFocus={() => setDistributionHoverIndex(index)}
+                                onMouseLeave={() => setDistributionHoverIndex(null)}
+                                onBlur={() => setDistributionHoverIndex(null)}
+                              />
+                            );
+                          })}
+                        </svg>
+                        {distributionHoverIndex != null ? (() => {
+                          const segment = distributionChartData.segments[distributionHoverIndex];
+                          if (!segment || !segment.path) {
+                            return null;
+                          }
+                          const companyName = segment.company ?? 'Unspecified';
+                          const tooltipLeft = clampValue((segment.tooltipPoint.x / 200) * 100, 14, 86);
+                          const tooltipTop = clampValue((segment.tooltipPoint.y / 200) * 100, 12, 86);
+                          return (
+                            <div
+                              className="reports-pie-chart__tooltip"
+                              style={{ left: `${tooltipLeft}%`, top: `${tooltipTop}%` }}
+                            >
+                              <strong style={{ color: segment.color }}>
+                                {companyName} : {formatCount(segment.value)}
+                              </strong>
+                              <span>{segment.displayPercent.toFixed(1)}% of total</span>
+                            </div>
+                          );
+                        })() : null}
                       </div>
                       <ul className="reports-pie-card__legend">
-                        {memberDistribution.segments.map((segment) => (
-                          <li key={segment.company}>
-                            <span className="reports-pie-card__swatch" style={{ backgroundColor: segment.color }} />
-                            <span className="reports-pie-card__label">{segment.company}</span>
-                            <strong>{formatCount(segment.value)}</strong>
-                            <span className="reports-pie-card__percent">{segment.percent.toFixed(1)}%</span>
-                          </li>
-                        ))}
+                        {distributionChartData.segments.map((segment, index) => {
+                          const companyName = segment.company ?? 'Unspecified';
+                          return (
+                            <li
+                              key={segment.company ?? index}
+                              className={distributionHoverIndex === index ? 'is-active' : ''}
+                              onMouseEnter={() => setDistributionHoverIndex(index)}
+                              onMouseMove={() => setDistributionHoverIndex(index)}
+                              onMouseLeave={() => setDistributionHoverIndex(null)}
+                              onFocus={() => setDistributionHoverIndex(index)}
+                              onBlur={() => setDistributionHoverIndex(null)}
+                              tabIndex={0}
+                              role="button"
+                              aria-label={`${companyName}: ${formatCount(segment.value)} members (${segment.displayPercent.toFixed(1)}%)`}
+                            >
+                              <span className="reports-pie-card__swatch" style={{ backgroundColor: segment.color }} />
+                              <span className="reports-pie-card__label">{companyName}</span>
+                              <strong>{formatCount(segment.value)}</strong>
+                              <span className="reports-pie-card__percent">{segment.displayPercent.toFixed(1)}%</span>
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                   ) : (
@@ -469,7 +1626,7 @@ export default function ReportsAnalytics() {
                 </article>
               </div>
 
-              <article className="admin-card">
+              <article className="admin-card admin-stack-md">
                 <header className="admin-card__heading">
                   <TrendingUp size={18} />
                   <div>
@@ -477,55 +1634,29 @@ export default function ReportsAnalytics() {
                     <p className="admin-muted">Cross-functional KPIs monitored in the latest reporting cycle.</p>
                   </div>
                 </header>
-                <div className="admin-summary-columns">
-                  <div className="admin-summary-column">
-                    <h3>Membership health</h3>
-                    {membershipHighlights.length ? (
-                      <ul className="admin-stat-list">
-                        {membershipHighlights.map((item) => (
-                          <li key={item.label}>
-                            <span>{item.label}</span>
-                            <span>{formatStatValue(item.value, item.format)}</span>
-                            <small>{item.meta ?? '—'}</small>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div className="admin-empty-state is-minimal">No membership KPIs yet.</div>
-                    )}
-                  </div>
-                  <div className="admin-summary-column">
-                    <h3>Financial performance</h3>
-                    {financialHighlights.length ? (
-                      <ul className="admin-stat-list">
-                        {financialHighlights.map((item) => (
-                          <li key={item.label}>
-                            <span>{item.label}</span>
-                            <span>{formatStatValue(item.value, item.format)}</span>
-                            <small>{item.meta ?? '—'}</small>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div className="admin-empty-state is-minimal">No financial KPIs yet.</div>
-                    )}
-                  </div>
-                  <div className="admin-summary-column">
-                    <h3>Operational health</h3>
-                    {operationsHighlights.length ? (
-                      <ul className="admin-stat-list">
-                        {operationsHighlights.map((item) => (
-                          <li key={item.label}>
-                            <span>{item.label}</span>
-                            <span>{formatStatValue(item.value, item.format)}</span>
-                            <small>{item.meta ?? '—'}</small>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div className="admin-empty-state is-minimal">No operations KPIs yet.</div>
-                    )}
-                  </div>
+                <div className="reports-performance">
+                  {performanceSections.map((section) => (
+                    <section key={section.id} className="reports-performance__section">
+                      <h3>{section.title}</h3>
+                      {section.items.length ? (
+                        <ul className="reports-performance__list">
+                          {section.items.map((item) => (
+                            <li key={item.label}>
+                              <div className="reports-performance__row">
+                                <span className="reports-performance__label">{item.label}</span>
+                                <div className="reports-performance__metrics">
+                                  <span className="reports-performance__value">{formatStatValue(item.value, item.format)}</span>
+                                  <span className="reports-performance__meta">{item.meta ?? '—'}</span>
+                                </div>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="admin-empty-state is-minimal">{section.emptyLabel}</div>
+                      )}
+                    </section>
+                  ))}
                 </div>
               </article>
 
@@ -534,124 +1665,363 @@ export default function ReportsAnalytics() {
 
         {activeTab === "membership" ? (
             <>
-              <section className="admin-card-grid cols-3">
+              <div className="admin-filter-bar">
+                <div className="admin-filter-bar__filters">
+                  <label className="admin-select">
+                    <span>Days</span>
+                    <select value={timeRange} onChange={handleTimeRangeChange}>
+                      {Object.entries(rangeShortLabels).map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="admin-select">
+                    <span>Company</span>
+                    <select value={selectedCompany} onChange={handleCompanyChange}>
+                      <option value="all">All companies</option>
+                      {companyOptions.map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="admin-button is-primary admin-filter-bar__action"
+                    onClick={handleMembershipExport}
+                    disabled={isExportingMembership}
+                  >
+                    <Download size={16} /> {isExportingMembership ? 'Preparing...' : 'Export report'}
+                  </button>
+                </div>
+              </div>
+
+              <section className="reports-metric-strip">
                 {(() => {
-                  const labels = [
-                    { title: "Active members", meta: "Across 128 locals" },
-                    { title: "New joiners", meta: `Past ${selectedRangeDuration}` },
-                    { title: "Retention", meta: "Trailing 12 months" },
+                  const totalAllStatuses = scopedMembers?.totalAllStatuses ?? summary?.members?.totalAllStatuses;
+                  const activeTotal = scopedMembers?.total ?? summary?.members?.total;
+                  const explicitInactive = scopedMembers?.inactive
+                    ?? scopedMembers?.inactiveMembers
+                    ?? summary?.members?.inactive
+                    ?? summary?.members?.inactiveMembers;
+                  const computedInactive = (() => {
+                    if (explicitInactive != null) {
+                      const numeric = Number(explicitInactive);
+                      return Number.isFinite(numeric) ? Math.max(numeric, 0) : null;
+                    }
+                    if (totalAllStatuses == null || activeTotal == null) {
+                      return null;
+                    }
+                    const allNumeric = Number(totalAllStatuses);
+                    const activeNumeric = Number(activeTotal);
+                    if (!Number.isFinite(allNumeric) || !Number.isFinite(activeNumeric)) {
+                      return null;
+                    }
+                    return Math.max(allNumeric - activeNumeric, 0);
+                  })();
+
+                  const retentionRateValue = scopedMembers?.retentionRate ?? summary?.members?.retentionRate;
+                  const retentionMeta = selectedCompany !== 'all'
+                    ? `${selectedCompany} retention`
+                    : 'Trailing 12 months';
+
+                  const comparisonLabelMap = {
+                    '7d': 'previous week',
+                    '30d': 'prev month',
+                    '90d': 'prev quarter',
+                    '12m': 'prior year',
+                  };
+                  const rangeCodeMap = {
+                    '7d': '7d',
+                    '30d': '30d',
+                    '90d': '90d',
+                    '12m': '12m',
+                  };
+                  const comparisonLabel = comparisonLabelMap[timeRange] ?? 'previous period';
+                  const rangeCode = rangeCodeMap[timeRange] ?? timeRange;
+
+                  const newJoinersDeltaPercent = pickFirstFinite(
+                    summary?.members?.newJoinersChangePercent,
+                    summary?.members?.newJoinersDeltaPercent,
+                    summary?.members?.newJoinersPercentChange,
+                    summary?.members?.growthPercent,
+                  );
+                  const newJoinersMetaBaseline = `Past ${selectedRangeDuration}${selectedCompany !== 'all' ? ` • ${selectedCompany}` : ''}`;
+                  const previousJoiners = pickFirstFinite(
+                    summary?.members?.newJoinersPrevPeriod,
+                    summary?.members?.previousNewJoiners,
+                    summary?.members?.newJoinersPreviousRange,
+                  );
+                  const newJoinersMeta = (() => {
+                    if (newJoinersDeltaPercent != null) {
+                      const sign = newJoinersDeltaPercent >= 0 ? '+' : '-';
+                      return `${sign}${Math.abs(newJoinersDeltaPercent).toFixed(1)}% vs ${comparisonLabel}`;
+                    }
+                    if (previousJoiners != null) {
+                      return `${formatCount(previousJoiners)} previous period`;
+                    }
+                    return newJoinersMetaBaseline;
+                  })();
+                  const newJoinersTone = newJoinersDeltaPercent != null
+                    ? (newJoinersDeltaPercent >= 0 ? 'positive' : 'negative')
+                    : 'neutral';
+
+                  const inactiveValue = toFiniteNumber(computedInactive);
+                  const totalForInactive = pickFirstFinite(
+                    totalAllStatuses,
+                    activeTotal != null && inactiveValue != null ? Number(activeTotal) + Number(inactiveValue) : null,
+                  );
+                  const inactivePercentOfTotal = (() => {
+                    if (inactiveValue == null || totalForInactive == null || totalForInactive <= 0) {
+                      return null;
+                    }
+                    return (inactiveValue / totalForInactive) * 100;
+                  })();
+                  const inactiveMetaBaseline = totalAllStatuses != null
+                    ? `${formatCount(totalAllStatuses)} total records${selectedCompany !== 'all' ? ` • ${selectedCompany}` : ''}`
+                    : 'Non-active records';
+                  const inactiveMeta = inactivePercentOfTotal != null
+                    ? `${inactivePercentOfTotal.toFixed(1)}% of total`
+                    : inactiveMetaBaseline;
+                  const inactiveTone = inactivePercentOfTotal != null && inactivePercentOfTotal > 0 ? 'negative' : 'neutral';
+
+                  const retentionRateNumber = toFiniteNumber(retentionRateValue);
+                  const retentionDisplayValue = retentionRateNumber != null ? `${retentionRateNumber.toFixed(1)}%` : '—';
+                  const retentionTone = retentionRateNumber != null
+                    ? (retentionRateNumber >= 96 ? 'positive' : retentionRateNumber >= 90 ? 'neutral' : 'negative')
+                    : 'neutral';
+                  const retentionMetaLabel = retentionRateNumber != null
+                    ? (retentionTone === 'positive'
+                      ? 'Above industry avg'
+                      : retentionTone === 'negative'
+                        ? 'Needs retention focus'
+                        : 'In line with industry')
+                    : retentionMeta;
+
+                  const cards = [
+                    {
+                      title: `New Members (${rangeCode})`,
+                      value: newJoinersValue != null ? formatCount(newJoinersValue) : '—',
+                      meta: newJoinersMeta,
+                      accent: 'primary',
+                      tone: newJoinersTone,
+                    },
+                    {
+                      title: 'Inactive Members',
+                      value: inactiveValue != null ? formatCount(inactiveValue) : '—',
+                      meta: inactiveMeta,
+                      accent: 'danger',
+                      tone: inactiveTone,
+                    },
+                    {
+                      title: 'Retention Rate',
+                      value: retentionDisplayValue,
+                      meta: retentionMetaLabel,
+                      accent: 'success',
+                      tone: retentionTone,
+                    },
                   ];
-                  const values = [
-                    summary?.members?.total != null ? formatCount(summary.members.total) : '—',
-                    newJoinersValue != null ? formatCount(newJoinersValue) : '—',
-                    summary?.members?.retentionRate != null ? `${Number(summary.members.retentionRate).toFixed(1)}%` : '—',
-                  ];
-                  return labels.map((lab, index) => (
-                    <article key={lab.title} className="admin-card admin-stack-sm">
-                      <span className="admin-card__label">{lab.title}</span>
-                      <span className="admin-highlight-value">{values[index]}</span>
-                      <span className="admin-muted">{lab.meta}</span>
-                    </article>
-                  ));
+
+                  return cards.map((card) => {
+                    const classes = [
+                      'reports-metric-card',
+                      `reports-metric-card--accent-${card.accent}`,
+                      card.tone ? `reports-metric-card--${card.tone}` : null,
+                    ].filter(Boolean).join(' ');
+                    return (
+                      <article key={card.title} className={classes}>
+                        <span className="reports-metric-card__value">{card.value}</span>
+                        <span className="reports-metric-card__label">{card.title}</span>
+                        <span className="reports-metric-card__meta">{card.meta}</span>
+                      </article>
+                    );
+                  });
                 })()}
               </section>
 
-              <div className="admin-grid-two">
-                <article className="admin-card admin-stack-md">
-                  <header className="admin-card__heading">
-                    <Users size={18} />
-                    <div>
-                      <h2>By union position</h2>
-                      <p className="admin-muted">Active members holding union leadership roles.</p>
-                    </div>
-                  </header>
-                  <div className="admin-stack-sm">
-                    {[
-                      { label: "Board member", value: 1234, percent: 6 },
-                      { label: "Treasurer", value: 567, percent: 3 },
-                      { label: "Secretary", value: 389, percent: 2 },
-                      { label: "Vice president", value: 156, percent: 1 },
-                      { label: "President", value: 112, percent: 1 },
-                    ].map((item) => (
-                      <div key={item.label} className="admin-progress-row">
-                        <div className="admin-progress-row__label">
-                          <span>{item.label}</span>
-                          <strong>{item.value.toLocaleString()}</strong>
-                        </div>
-                        <div className="admin-progress">
-                          <span style={{ width: `${item.percent}%` }} />
-                        </div>
+              <section className="reports-demographics">
+                <div className="admin-section-title">
+                  <h2>Membership Demographics</h2>
+                </div>
+                <div className="reports-demographics-grid">
+                  <article className="admin-card reports-demographics-card">
+                    <header className="reports-demographics-card__header">
+                      <Users size={18} />
+                      <div>
+                        <h3>By union position</h3>
+                        <p className="admin-muted">Active members holding union roles.</p>
                       </div>
-                    ))}
-                  </div>
-                </article>
+                    </header>
+                    {unionPositionStats.length ? (
+                      <ul className="reports-demographics-list">
+                        {unionPositionStats.map((item) => (
+                          <li key={item.id} className="reports-demographics-item">
+                            <div className="reports-demographics-item__header">
+                              <span>{item.label}</span>
+                              <strong>{item.formattedValue}</strong>
+                            </div>
+                            <div className="reports-demographics-progress">
+                              <span
+                                className="reports-demographics-progress__fill is-union"
+                                style={{ width: `${item.width}%` }}
+                              />
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="admin-empty-state is-minimal">No union position data yet.</div>
+                    )}
+                  </article>
 
-                <article className="admin-card admin-stack-md">
-                  <header className="admin-card__heading">
-                    <BarChart3 size={18} />
-                    <div>
-                      <h2>By years employed</h2>
-                      <p className="admin-muted">Experience distribution across active members.</p>
-                    </div>
-                  </header>
-                  <div className="admin-stack-sm">
-                    {[
-                      { label: "1-5 years", value: 7698, percent: 40 },
-                      { label: "6-10 years", value: 5774, percent: 30 },
-                      { label: "11-15 years", value: 3849, percent: 20 },
-                      { label: "16-20 years", value: 1540, percent: 8 },
-                      { label: "20+ years", value: 386, percent: 2 },
-                    ].map((item) => (
-                      <div key={item.label} className="admin-progress-row">
-                        <div className="admin-progress-row__label">
-                          <span>{item.label}</span>
-                          <strong>{item.value.toLocaleString()}</strong>
-                        </div>
-                        <div className="admin-progress">
-                          <span style={{ width: `${item.percent}%` }} />
-                        </div>
+                  <article className="admin-card reports-demographics-card">
+                    <header className="reports-demographics-card__header">
+                      <BarChart3 size={18} />
+                      <div>
+                        <h3>By years employed</h3>
+                        <p className="admin-muted">Experience distribution for approved members.</p>
                       </div>
-                    ))}
-                  </div>
-                </article>
-              </div>
+                    </header>
+                    {tenureStats.length ? (
+                      <ul className="reports-demographics-list">
+                        {tenureStats.map((item) => (
+                          <li key={item.id} className="reports-demographics-item">
+                            <div className="reports-demographics-item__header">
+                              <span>{item.label}</span>
+                              <strong>{item.formattedValue}</strong>
+                            </div>
+                            <div className="reports-demographics-progress">
+                              <span
+                                className="reports-demographics-progress__fill is-tenure"
+                                style={{ width: `${item.width}%` }}
+                              />
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="admin-empty-state is-minimal">No tenure data yet.</div>
+                    )}
+                  </article>
+                </div>
+              </section>
             </>
             ) : null}
 
         {activeTab === "financial" ? (
             <>
-              <section className="admin-card-grid cols-4">
-                {financialHighlights.map((item) => (
-                  <article key={item.label} className="admin-card admin-stack-sm admin-card--center">
-                    <span className="admin-card__value">{formatStatValue(item.value, item.format)}</span>
-                    <span className="admin-muted">{item.label}</span>
-                    <span className="admin-card__meta">{item.meta ?? '—'}</span>
-                  </article>
-                ))}
+              <section className="reports-financial-strip">
+                {financialPrimaryStats.map((item) => {
+                  const value = formatStatValue(item.value, item.format);
+                  const toneClass = (() => {
+                    switch (item.id) {
+                      case 'month':
+                        return 'is-success';
+                      case 'ytd':
+                        return 'is-primary';
+                      case 'outstanding':
+                        return 'is-danger';
+                      case 'collection-rate':
+                        return 'is-accent';
+                      default:
+                        return 'is-neutral';
+                    }
+                  })();
+                  return (
+                    <article key={item.id} className={`reports-financial-card ${toneClass}`}>
+                      <span className="reports-financial-card__value">{value}</span>
+                      <div className="reports-financial-card__footer">
+                        <span className="reports-financial-card__label">{item.label}</span>
+                        <span className="reports-financial-card__meta">{item.meta}</span>
+                      </div>
+                    </article>
+                  );
+                })}
               </section>
 
               <article className="admin-card admin-stack-md">
                 <header className="admin-card__heading">
                   <DollarSign size={18} />
                   <div>
-                    <h2>Dues collection performance</h2>
+                    <h2>Dues Collection Performance</h2>
                     <p className="admin-muted">Collected vs target by month.</p>
                   </div>
                 </header>
-                <div className="admin-chart-placeholder">
-                  <div className="admin-chart-placeholder__content">
-                    <span>Bar chart placeholder – connect your BI chart</span>
-                    <div className="admin-chart-legend">
-                      <span className="is-primary">Collected</span>
-                      <span className="is-muted">Target</span>
+                {duesCollectionChart ? (
+                  <div className="reports-collection-chart">
+                    <div className="reports-collection-chart__plot">
+                      <div className="reports-collection-chart__grid">
+                        {duesCollectionChart.ticks.map((tick, index) => (
+                          <div
+                            key={`collection-tick-${tick.value}-${index}`}
+                            className={`reports-collection-chart__grid-line ${index === 0 ? 'is-base' : ''}`}
+                            style={{ bottom: `${tick.percent}%` }}
+                          >
+                            <span>{tick.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="reports-collection-chart__columns">
+                        {duesCollectionChart.series.map((entry, index) => {
+                          const isActive = collectionHoverIndex === index;
+                          return (
+                            <button
+                              type="button"
+                              key={entry.id ?? `collection-${index}`}
+                              className={`reports-collection-chart__column ${isActive ? 'is-active' : ''}`}
+                              onMouseEnter={() => setCollectionHoverIndex(index)}
+                              onFocus={() => setCollectionHoverIndex(index)}
+                              onMouseLeave={() => setCollectionHoverIndex(null)}
+                              onBlur={() => setCollectionHoverIndex(null)}
+                            >
+                              <div className="reports-collection-chart__bar-group">
+                                <span
+                                  className="reports-collection-chart__bar is-actual"
+                                  style={{ height: `${Math.max(0, Math.min(entry.collectedPercent, 100))}%` }}
+                                />
+                                <span
+                                  className="reports-collection-chart__bar is-target"
+                                  style={{ height: `${Math.max(0, Math.min(entry.billedPercent, 100))}%` }}
+                                />
+                              </div>
+                              <span className="reports-collection-chart__month">{entry.label}</span>
+                            </button>
+                          );
+                        })}
+                        {collectionTooltip ? (
+                          <div
+                            className="reports-collection-chart__tooltip"
+                            style={{ left: `${collectionTooltip.left}%` }}
+                          >
+                            <strong>{formatCurrency(collectionTooltip.item.collected)}</strong>
+                            <span>{collectionTooltip.item.label}</span>
+                            {Number.isFinite(collectionTooltip.item.billed) && collectionTooltip.item.billed > 0 ? (
+                              <span>Target {formatCurrency(collectionTooltip.item.billed)}</span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="reports-collection-chart__legend">
+                      <span className="reports-collection-chart__legend-item">
+                        <span className="reports-collection-chart__legend-swatch is-actual" />
+                        Collected
+                      </span>
+                      <span className="reports-collection-chart__legend-item">
+                        <span className="reports-collection-chart__legend-swatch is-target" />
+                        Target
+                      </span>
                     </div>
                   </div>
-                </div>
-                <div className="admin-inline-list">
-                  <span>Target attainment: 108%</span>
-                  <span>Variance: +₱120K</span>
-                  <span>Payroll imports: 92%</span>
-                </div>
+                ) : (
+                  <div className="admin-empty-state is-minimal">No dues collection data yet.</div>
+                )}
+                {financialCollectionBadges.length ? (
+                  <div className="admin-inline-list">
+                    {financialCollectionBadges.map((badge) => (
+                      <span key={badge.label}>{badge.label}: {badge.value}</span>
+                    ))}
+                  </div>
+                ) : null}
               </article>
 
               <div className="admin-grid-two">
@@ -663,52 +2033,83 @@ export default function ReportsAnalytics() {
                       <p className="admin-muted">Collections vs target over the last quarter.</p>
                     </div>
                   </header>
-                  <div className="admin-stack-sm">
-                    {[
-                      { label: "SM Investments", value: "₱1.2M", percent: 96 },
-                      { label: "Ayala Corporation", value: "₱980K", percent: 90 },
-                      { label: "Jollibee Foods", value: "₱742K", percent: 82 },
-                      { label: "LRT Operations", value: "₱615K", percent: 78 },
-                    ].map((row) => (
-                      <div key={row.label} className="admin-progress-row">
-                        <div className="admin-progress-row__label">
-                          <span>{row.label}</span>
-                          <strong>{row.value}</strong>
-                        </div>
-                        <div className="admin-progress">
-                          <span style={{ width: `${row.percent}%` }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  {financialTopCompanies.items.length ? (
+                    <div className="reports-top-list">
+                      {financialTopCompanies.items.map((item) => {
+                        const progressBasis = financialTopCompanies.maxCollected > 0
+                          ? (item.collected / financialTopCompanies.maxCollected) * 100
+                          : 0;
+                        const progress = Math.max(6, Math.min(progressBasis, 100));
+                        const collectionRateLabel = item.collectionRate != null
+                          ? `${formatPercent(item.collectionRate, Math.abs(item.collectionRate) >= 100 ? 0 : 1)} collection rate`
+                          : 'No billing data yet';
+                        const membersLabel = Number.isFinite(item.members) && item.members > 0
+                          ? `${formatCount(item.members)} members`
+                          : null;
+                        const metaLabel = membersLabel ? `${collectionRateLabel} • ${membersLabel}` : collectionRateLabel;
+                        return (
+                          <div key={item.company} className="reports-top-list__item">
+                            <div className="reports-top-list__row">
+                              <div className="reports-top-list__info">
+                                <span className="reports-top-list__company">{item.company}</span>
+                                <span className="reports-top-list__meta">{metaLabel}</span>
+                              </div>
+                              <div className="reports-top-list__value">
+                                <strong>{formatCurrency(item.collected ?? 0)}</strong>
+                                {Number.isFinite(item.billed) && item.billed > 0 ? (
+                                  <span>Billed {formatCurrency(item.billed)}</span>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="reports-top-list__bar">
+                              <span style={{ width: `${progress}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="admin-empty-state is-minimal">No company performance data yet.</div>
+                  )}
                 </article>
 
                 <article className="admin-card admin-stack-md">
                   <header className="admin-card__heading">
                     <Target size={18} />
                     <div>
-                      <h2>Collection focus areas</h2>
-                      <p className="admin-muted">Priorities surfaced by AI monitoring.</p>
+                      <h2>Payment methods</h2>
+                      <p className="admin-muted">Contribution split by remittance channel.</p>
                     </div>
                   </header>
-                  <ul className="admin-list-plain">
-                    <li>
-                      <span>Outstanding payroll uploads</span>
-                      <strong>12 companies</strong>
-                    </li>
-                    <li>
-                      <span>Members with 2+ missed deductions</span>
-                      <strong>428 accounts</strong>
-                    </li>
-                    <li>
-                      <span>Manual remittances awaiting reconciliation</span>
-                      <strong>₱186K</strong>
-                    </li>
-                    <li>
-                      <span>Projected arrears (next 30d)</span>
-                      <strong>₱92K</strong>
-                    </li>
-                  </ul>
+                  {paymentMethodStats.items.length ? (
+                    <div className="reports-payment-list">
+                      {paymentMethodStats.items.map((item) => {
+                        const progressBasis = paymentMethodStats.maxValue > 0
+                          ? (item.amount / paymentMethodStats.maxValue) * 100
+                          : 0;
+                        const progress = Math.max(6, Math.min(progressBasis, 100));
+                        const percentLabel = item.percent > 0
+                          ? `${item.percent >= 10 ? item.percent.toFixed(0) : item.percent.toFixed(1)}% of collections`
+                          : 'No collections recorded';
+                        return (
+                          <div key={item.key ?? item.label} className="reports-payment-item">
+                            <div className="reports-payment-item__header">
+                              <span>{item.label}</span>
+                              <strong>{item.formattedAmount}</strong>
+                            </div>
+                            <div className="reports-payment-item__bar">
+                              <span style={{ width: `${progress}%` }} />
+                            </div>
+                            <div className="reports-payment-item__meta">
+                              <span>{percentLabel}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="admin-empty-state is-minimal">No payment method data yet.</div>
+                  )}
                 </article>
               </div>
             </>
@@ -716,14 +2117,26 @@ export default function ReportsAnalytics() {
 
         {activeTab === "operations" ? (
             <>
-              <section className="admin-card-grid cols-4">
-                {operationsHighlights.map((item) => (
-                  <article key={item.label} className="admin-card admin-stack-sm admin-card--center">
-                    <span className="admin-card__value">{formatStatValue(item.value, item.format)}</span>
-                    <span className="admin-muted">{item.label}</span>
-                    <span className="admin-card__meta">{item.meta ?? '—'}</span>
-                  </article>
-                ))}
+              <section className="reports-operation-strip">
+                {operationsPrimaryStats.map((item) => {
+                  const colorClass = (() => {
+                    switch (item.id) {
+                      case 'physical-cards': return 'text-purple';
+                      case 'assistance-beneficiaries': return 'text-green';
+                      case 'events-this-year': return 'text-orange';
+                      default: return '';
+                    }
+                  })();
+                  return (
+                    <article key={item.id} className="reports-operation-card">
+                      <span className={`reports-operation-card__value ${colorClass}`}>
+                        {formatStatValue(item.value, item.format)}
+                      </span>
+                      <span className="reports-operation-card__label">{item.label}</span>
+                      <span className={`reports-operation-card__meta ${item.metaColor || ''}`}>{item.meta}</span>
+                    </article>
+                  );
+                })}
               </section>
 
               <div className="admin-grid-two">
@@ -778,38 +2191,6 @@ export default function ReportsAnalytics() {
                   </ul>
                 </article>
               </div>
-
-              <article className="admin-card admin-stack-md">
-                <header className="admin-card__heading">
-                  <Award size={18} />
-                  <div>
-                    <h2>Assistance programs</h2>
-                    <p className="admin-muted">Benefit disbursements and satisfaction scores.</p>
-                  </div>
-                </header>
-                <div className="admin-grid-two">
-                  <div className="admin-assistance-tile">
-                    <strong>247</strong>
-                    <span>Total requests (30d)</span>
-                    <small>+18% vs prior</small>
-                  </div>
-                  <div className="admin-assistance-tile">
-                    <strong>₱2.57M</strong>
-                    <span>Funds released</span>
-                    <small>Avg turn-around: 3.2 days</small>
-                  </div>
-                  <div className="admin-assistance-tile">
-                    <strong>91%</strong>
-                    <span>Member satisfaction</span>
-                    <small>Survey sample: 186</small>
-                  </div>
-                  <div className="admin-assistance-tile">
-                    <strong>12</strong>
-                    <span>Escalated cases</span>
-                    <small>Flagged for manual audit</small>
-                  </div>
-                </div>
-              </article>
             </>
             ) : null}
 
