@@ -22,6 +22,7 @@ export const exportMembershipReport = (params) => client.get('/api/admin/reports
   responseType: 'blob',
   headers: { Accept: 'text/csv' },
 });
+export const updateReportSchedule = (scheduleId, payload) => client.patch(`/api/admin/reports/schedules/${scheduleId}`, payload);
 
 export default {
   listTickets,
@@ -39,4 +40,5 @@ export default {
   getReportsSummary,
   exportTicketsReport,
   exportMembershipReport,
+  updateReportSchedule,
 };

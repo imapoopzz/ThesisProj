@@ -14,6 +14,7 @@ import {
   Target,
   TrendingUp,
   Users,
+  X,
 } from "lucide-react";
 import "../styles/admin-base.css";
 import api from "../api/admin";
@@ -26,7 +27,6 @@ const tabs = [
   { id: "custom", label: "Custom Reports" },
 ];
 const exportHistory = [];
-const scheduledReports = [];
 
 const DEFAULT_REPORT_BUILDER_OPTIONS = {
   reportTypes: [
@@ -107,6 +107,171 @@ const computeAxisScale = (value, sections = 4) => {
   return { max, step };
 };
 
+const SCHEDULE_CADENCE_LABELS = {
+  daily: "Daily",
+  weekly: "Weekly",
+  biweekly: "Every 2 weeks",
+  monthly: "Monthly",
+  quarterly: "Quarterly",
+  annually: "Annual",
+  custom: "Custom cadence",
+};
+
+const SCHEDULE_CADENCE_OPTIONS = [
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Bi-weekly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "quarterly", label: "Quarterly" },
+  { value: "annually", label: "Annual" },
+  { value: "custom", label: "Custom" },
+];
+
+const DEFAULT_SCHEDULE_FORM = {
+  name: "",
+  cadence: "monthly",
+  nextRun: "",
+  timezone: "Asia/Manila",
+  format: "pdf",
+  recipients: "",
+};
+
+const scheduleIdFor = (entry) => {
+  if (!entry) {
+    return null;
+  }
+  if (typeof entry.id === "string" && entry.id) {
+    return entry.id;
+  }
+  if (typeof entry.scheduleId === "string" && entry.scheduleId) {
+    return entry.scheduleId;
+  }
+  if (typeof entry.key === "string" && entry.key) {
+    return entry.key;
+  }
+  return null;
+};
+
+const normalizeRecipientsList = (input) => {
+  if (!input) {
+    return [];
+  }
+  const values = Array.isArray(input)
+    ? input
+    : String(input)
+      .split(/[,;]+/)
+      .map((value) => value.trim());
+  const normalized = [];
+  const seen = new Set();
+  values.forEach((value) => {
+    if (!value) {
+      return;
+    }
+    const recipient = String(value).trim();
+    if (!recipient) {
+      return;
+    }
+    const key = recipient.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    normalized.push(recipient);
+  });
+  return normalized;
+};
+
+const normalizeScheduleEntry = (entry, fallbackId = "") => {
+  if (!entry) {
+    return null;
+  }
+  const resolvedId = scheduleIdFor(entry) ?? fallbackId;
+  if (!resolvedId) {
+    return null;
+  }
+
+  const rawCadence =
+    typeof entry.cadence === "string" && entry.cadence
+      ? entry.cadence
+      : typeof entry.frequency === "string"
+        ? entry.frequency
+        : "";
+  const cadenceKey = rawCadence ? rawCadence.trim().toLowerCase() : "";
+  const recipients = normalizeRecipientsList(entry.recipients);
+  const cadenceLabel = entry.cadenceLabel
+    ?? SCHEDULE_CADENCE_LABELS[cadenceKey]
+    ?? (cadenceKey
+      ? `${cadenceKey.charAt(0).toUpperCase()}${cadenceKey.slice(1)}`
+      : SCHEDULE_CADENCE_LABELS.custom);
+
+  return {
+    id: resolvedId,
+    name:
+      (typeof entry.name === "string" && entry.name.trim())
+        ? entry.name.trim()
+        : (typeof entry.reportName === "string" && entry.reportName.trim())
+          ? entry.reportName.trim()
+          : "Untitled report",
+    cadence: cadenceKey || "custom",
+    cadenceLabel,
+    nextRun: entry.nextRun ?? entry.nextRunAt ?? null,
+    timezone: entry.timezone ?? entry.timeZone ?? "Asia/Manila",
+    format:
+      (typeof entry.format === "string" && entry.format.trim())
+        ? entry.format.trim()
+        : (typeof entry.deliveryFormat === "string" && entry.deliveryFormat.trim())
+          ? entry.deliveryFormat.trim()
+          : null,
+    recipients,
+    active: typeof entry.active === "boolean" ? entry.active : entry.status !== "paused",
+    lastRunStatus: entry.lastRunStatus ?? entry.lastStatus ?? null,
+    updatedAt: entry.updatedAt ?? entry.modifiedAt ?? null,
+  };
+};
+
+const formatScheduleDate = (isoString, timezone) => {
+  if (!isoString) {
+    return "Next run not set";
+  }
+  try {
+    const formatter = new Intl.DateTimeFormat("en-PH", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      hour12: true,
+      timeZone: timezone || "Asia/Manila",
+    });
+    return `Next run ${formatter.format(new Date(isoString))}`;
+  } catch (error) {
+    return `Next run ${isoString}`;
+  }
+};
+
+const toDateInputValue = (isoString) => {
+  if (!isoString) {
+    return "";
+  }
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return date.toISOString().slice(0, 10);
+};
+
+const fromDateInputToIso = (dateString) => {
+  if (!dateString) {
+    return null;
+  }
+  const base = `${dateString}T09:00:00`;
+  const next = new Date(base);
+  if (Number.isNaN(next.getTime())) {
+    return null;
+  }
+  return next.toISOString();
+};
+
 export default function ReportsAnalytics() {
   const [activeTab, setActiveTab] = useState("overview");
   const [timeRange, setTimeRange] = useState("30d");
@@ -144,6 +309,12 @@ export default function ReportsAnalytics() {
   };
 
   const [summary, setSummary] = useState(null);
+  const [schedulePendingMap, setSchedulePendingMap] = useState({});
+  const [scheduleActionError, setScheduleActionError] = useState(null);
+  const [editingScheduleId, setEditingScheduleId] = useState(null);
+  const [scheduleForm, setScheduleForm] = useState(() => ({ ...DEFAULT_SCHEDULE_FORM }));
+  const [scheduleFormError, setScheduleFormError] = useState(null);
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
   const summaryMeta = summary?.meta ?? null;
 
@@ -878,6 +1049,10 @@ export default function ReportsAnalytics() {
     setDistributionHoverIndex(null);
   }, [distributionChartData]);
 
+  useEffect(() => {
+    setScheduleActionError(null);
+  }, [summary?.reportSchedules]);
+
   const performanceHighlights = useMemo(() => {
     const toHighlights = (items) => (items ?? []).map((item) => ({
       label: item.label,
@@ -892,6 +1067,37 @@ export default function ReportsAnalytics() {
       operations: toHighlights(summary?.performance?.operations),
     };
   }, [summary]);
+
+  const reportSchedules = useMemo(() => {
+    if (!summary || !Array.isArray(summary.reportSchedules)) {
+      return [];
+    }
+
+    const normalized = summary.reportSchedules
+      .map((entry, index) => normalizeScheduleEntry(entry, `schedule-${index}`))
+      .filter(Boolean);
+
+    normalized.sort((a, b) => {
+      const aTime = a.nextRun ? Date.parse(a.nextRun) : Number.POSITIVE_INFINITY;
+      const bTime = b.nextRun ? Date.parse(b.nextRun) : Number.POSITIVE_INFINITY;
+      return aTime - bTime;
+    });
+
+    return normalized;
+  }, [summary]);
+
+  const editingSchedule = useMemo(
+    () => reportSchedules.find((schedule) => schedule.id === editingScheduleId) ?? null,
+    [reportSchedules, editingScheduleId],
+  );
+
+  useEffect(() => {
+    if (editingScheduleId && !editingSchedule) {
+      setEditingScheduleId(null);
+      setScheduleForm({ ...DEFAULT_SCHEDULE_FORM });
+      setScheduleFormError(null);
+    }
+  }, [editingScheduleId, editingSchedule]);
 
   useEffect(() => {
     let mounted = true;
@@ -959,6 +1165,176 @@ export default function ReportsAnalytics() {
       console.error('Unable to export membership report', error);
     } finally {
       setIsExportingMembership(false);
+    }
+  };
+
+  const setSchedulePending = (scheduleId, flag) => {
+    if (!scheduleId) {
+      return;
+    }
+    setSchedulePendingMap((previous) => {
+      const next = { ...previous };
+      if (!flag) {
+        if (next[scheduleId]) {
+          delete next[scheduleId];
+          return next;
+        }
+        return previous;
+      }
+      if (next[scheduleId]) {
+        return previous;
+      }
+      next[scheduleId] = true;
+      return next;
+    });
+  };
+
+  const handleScheduleToggle = async (schedule) => {
+    if (!schedule?.id) {
+      return;
+    }
+    setScheduleActionError(null);
+    setSchedulePending(schedule.id, true);
+    try {
+      const response = await api.updateReportSchedule(schedule.id, { active: !schedule.active });
+      const updatedSchedule = response?.data?.schedule ?? null;
+      setSummary((previous) => {
+        if (!previous) {
+          return previous;
+        }
+        const baseList = Array.isArray(previous.reportSchedules)
+          ? previous.reportSchedules
+          : [];
+        let updated = false;
+        const nextList = baseList.map((item, index) => {
+          const itemId = scheduleIdFor(item) ?? `schedule-${index}`;
+          if (itemId !== schedule.id) {
+            return item;
+          }
+          updated = true;
+          if (updatedSchedule) {
+            return { ...item, ...updatedSchedule };
+          }
+          return { ...item, active: !schedule.active };
+        });
+        if (!updated) {
+          return updatedSchedule
+            ? { ...previous, reportSchedules: [...baseList, updatedSchedule] }
+            : previous;
+        }
+        return { ...previous, reportSchedules: nextList };
+      });
+      setScheduleActionError(null);
+    } catch (error) {
+      console.error('Unable to update schedule', error);
+      setScheduleActionError('Unable to update the schedule right now. Please try again.');
+    } finally {
+      setSchedulePending(schedule.id, false);
+    }
+  };
+
+  const openScheduleDialog = (schedule) => {
+    if (!schedule?.id) {
+      return;
+    }
+    setScheduleForm({
+      name: schedule.name ?? '',
+      cadence: schedule.cadence ?? 'custom',
+      nextRun: toDateInputValue(schedule.nextRun),
+      timezone: schedule.timezone ?? 'Asia/Manila',
+      format: (schedule.format ?? 'pdf').toLowerCase(),
+      recipients: schedule.recipients.join(', '),
+    });
+    setScheduleFormError(null);
+    setEditingScheduleId(schedule.id);
+  };
+
+  const closeScheduleDialog = () => {
+    setEditingScheduleId(null);
+    setScheduleForm({ ...DEFAULT_SCHEDULE_FORM });
+    setScheduleFormError(null);
+  };
+
+  const handleScheduleFormChange = (event) => {
+    const { name, value } = event.target;
+    if (!name) {
+      return;
+    }
+    setScheduleForm((previous) => ({ ...previous, [name]: value }));
+  };
+
+  const handleScheduleSave = async () => {
+    if (!editingScheduleId) {
+      return;
+    }
+    const trimmedName = scheduleForm.name.trim();
+    if (!trimmedName) {
+      setScheduleFormError('Please provide a report name.');
+      return;
+    }
+    if (!scheduleForm.nextRun) {
+      setScheduleFormError('Please select the next run date.');
+      return;
+    }
+    const nextRunIso = fromDateInputToIso(scheduleForm.nextRun);
+    if (!nextRunIso) {
+      setScheduleFormError('Next run date is invalid.');
+      return;
+    }
+    const recipientsList = normalizeRecipientsList(scheduleForm.recipients);
+    setIsSavingSchedule(true);
+    setScheduleFormError(null);
+    try {
+      const response = await api.updateReportSchedule(editingScheduleId, {
+        name: trimmedName,
+        cadence: scheduleForm.cadence,
+        nextRun: nextRunIso,
+        timezone: scheduleForm.timezone,
+        format: scheduleForm.format,
+        recipients: recipientsList,
+      });
+      const updatedSchedule = response?.data?.schedule ?? null;
+      setSummary((previous) => {
+        if (!previous) {
+          return previous;
+        }
+        const baseList = Array.isArray(previous.reportSchedules)
+          ? previous.reportSchedules
+          : [];
+        let updated = false;
+        const nextList = baseList.map((item, index) => {
+          const itemId = scheduleIdFor(item) ?? `schedule-${index}`;
+          if (itemId !== editingScheduleId) {
+            return item;
+          }
+          updated = true;
+          if (updatedSchedule) {
+            return { ...item, ...updatedSchedule };
+          }
+          return {
+            ...item,
+            name: trimmedName,
+            cadence: scheduleForm.cadence,
+            nextRun: nextRunIso,
+            timezone: scheduleForm.timezone,
+            format: scheduleForm.format,
+            recipients: recipientsList,
+          };
+        });
+        const reportSchedulesNext = updated
+          ? nextList
+          : updatedSchedule
+            ? [...baseList, updatedSchedule]
+            : baseList;
+        return { ...previous, reportSchedules: reportSchedulesNext };
+      });
+      setScheduleActionError(null);
+      closeScheduleDialog();
+    } catch (error) {
+      console.error('Unable to update schedule', error);
+      setScheduleFormError('Unable to save changes. Please try again.');
+    } finally {
+      setIsSavingSchedule(false);
     }
   };
 
@@ -2759,18 +3135,65 @@ export default function ReportsAnalytics() {
                     </div>
                   </header>
                   <div className="admin-stack-sm">
-                    {scheduledReports.map((entry) => (
-                      <div key={entry.id} className="admin-scheduled-row">
-                        <div>
-                          <strong>{entry.name}</strong>
-                          <p className="admin-muted">{entry.cadence} • Next run {entry.nextRun}</p>
-                        </div>
-                        <div className="admin-scheduled-row__actions">
-                          <button type="button" className="admin-button admin-button--ghost">Pause</button>
-                          <button type="button" className="admin-button admin-button--ghost">Edit</button>
-                        </div>
+                    {scheduleActionError ? (
+                      <p className="admin-text-error">{scheduleActionError}</p>
+                    ) : null}
+                    {!reportSchedules.length ? (
+                      <div className="admin-empty-state">
+                        <p className="admin-muted">No scheduled reports yet.</p>
+                        <p className="admin-muted">Create automated deliveries once reports are finalized.</p>
                       </div>
-                    ))}
+                    ) : reportSchedules.map((schedule) => {
+                      const metaParts = [
+                        schedule.cadenceLabel,
+                        formatScheduleDate(schedule.nextRun, schedule.timezone),
+                      ];
+                      if (schedule.recipients.length) {
+                        const recipientCount = schedule.recipients.length;
+                        metaParts.push(`${recipientCount} recipient${recipientCount === 1 ? '' : 's'}`);
+                      }
+                      if (schedule.format) {
+                        metaParts.push(String(schedule.format).toUpperCase());
+                      }
+                      const metaText = metaParts.filter(Boolean).join(' • ');
+                      const isPending = Boolean(schedulePendingMap[schedule.id]);
+                      const buttonLabel = isPending
+                        ? 'Updating...'
+                        : schedule.active
+                          ? 'Pause'
+                          : 'Resume';
+                      return (
+                        <div key={schedule.id} className="admin-scheduled-row">
+                          <div>
+                            <div className="admin-scheduled-row__header">
+                              <strong>{schedule.name}</strong>
+                              {!schedule.active ? (
+                                <span className="admin-chip admin-chip--ghost">Paused</span>
+                              ) : null}
+                            </div>
+                            <p className="admin-scheduled-row__meta">{metaText}</p>
+                          </div>
+                          <div className="admin-scheduled-row__actions">
+                            <button
+                              type="button"
+                              className="admin-button admin-button--ghost"
+                              onClick={() => handleScheduleToggle(schedule)}
+                              disabled={isPending}
+                            >
+                              {buttonLabel}
+                            </button>
+                            <button
+                              type="button"
+                              className="admin-button admin-button--ghost"
+                              onClick={() => openScheduleDialog(schedule)}
+                              disabled={isPending}
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </article>
               </div>
@@ -2817,6 +3240,118 @@ export default function ReportsAnalytics() {
             </>
             ) : null}
       </div>
+      {editingScheduleId && editingSchedule ? (
+        <div className="admin-dialog" role="dialog" aria-modal="true">
+          <div className="admin-dialog__backdrop" onClick={closeScheduleDialog} />
+          <div className="admin-dialog__panel">
+            <header className="admin-dialog__header">
+              <div>
+                <h3>Edit scheduled report</h3>
+                <p className="admin-muted">{editingSchedule.name}</p>
+              </div>
+              <button
+                type="button"
+                className="admin-icon-button"
+                onClick={closeScheduleDialog}
+                aria-label="Close scheduled report editor"
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <div className="admin-dialog__body admin-stack-md">
+              <label className="admin-field">
+                <span>Report name</span>
+                <input
+                  type="text"
+                  name="name"
+                  value={scheduleForm.name}
+                  onChange={handleScheduleFormChange}
+                  required
+                />
+              </label>
+              <div className="admin-form-grid">
+                <label className="admin-field">
+                  <span>Cadence</span>
+                  <select
+                    name="cadence"
+                    value={scheduleForm.cadence}
+                    onChange={handleScheduleFormChange}
+                  >
+                    {SCHEDULE_CADENCE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="admin-field">
+                  <span>Next run date</span>
+                  <input
+                    type="date"
+                    name="nextRun"
+                    value={scheduleForm.nextRun}
+                    onChange={handleScheduleFormChange}
+                    required
+                  />
+                </label>
+                <label className="admin-field">
+                  <span>Timezone</span>
+                  <input
+                    type="text"
+                    name="timezone"
+                    value={scheduleForm.timezone}
+                    onChange={handleScheduleFormChange}
+                  />
+                </label>
+                <label className="admin-field">
+                  <span>Format</span>
+                  <select
+                    name="format"
+                    value={scheduleForm.format}
+                    onChange={handleScheduleFormChange}
+                  >
+                    <option value="pdf">PDF report</option>
+                    <option value="excel">Excel spreadsheet</option>
+                    <option value="csv">CSV export</option>
+                    <option value="dashboard">Interactive dashboard</option>
+                  </select>
+                </label>
+              </div>
+              <label className="admin-field">
+                <span>Recipients</span>
+                <textarea
+                  name="recipients"
+                  value={scheduleForm.recipients}
+                  onChange={handleScheduleFormChange}
+                  rows={3}
+                  placeholder="Separate email addresses with commas"
+                />
+              </label>
+              {scheduleFormError ? (
+                <p className="admin-text-error">{scheduleFormError}</p>
+              ) : null}
+            </div>
+            <footer className="admin-dialog__footer">
+              <button
+                type="button"
+                className="admin-button admin-button--ghost"
+                onClick={closeScheduleDialog}
+                disabled={isSavingSchedule}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="admin-button is-primary"
+                onClick={handleScheduleSave}
+                disabled={isSavingSchedule}
+              >
+                {isSavingSchedule ? 'Saving...' : 'Save changes'}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

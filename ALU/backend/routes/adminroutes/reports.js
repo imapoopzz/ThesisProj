@@ -168,6 +168,197 @@ const SAMPLE_AI_METRICS = {
   timeSavedTone: 'positive',
 };
 
+const SAMPLE_REPORT_SCHEDULES = [
+  {
+    id: 'sample-schedule-membership-monthly',
+    name: 'Monthly Membership Summary',
+    cadence: 'monthly',
+    timezone: 'Asia/Manila',
+    nextRun: '2024-10-01T09:00:00+08:00',
+    format: 'pdf',
+    recipients: ['executive.board@alu.org', 'membership@alu.org'],
+    active: true,
+    lastRun: '2024-09-01T09:01:12+08:00',
+    lastRunStatus: 'success',
+    createdAt: '2024-01-15T09:00:00+08:00',
+    updatedAt: '2024-09-01T09:01:12+08:00',
+  },
+  {
+    id: 'sample-schedule-collections-weekly',
+    name: 'Weekly Collection Report',
+    cadence: 'weekly',
+    timezone: 'Asia/Manila',
+    nextRun: '2024-09-23T08:30:00+08:00',
+    format: 'excel',
+    recipients: ['finance.operations@alu.org'],
+    active: true,
+    lastRun: '2024-09-16T08:30:54+08:00',
+    lastRunStatus: 'success',
+    createdAt: '2024-02-05T08:30:00+08:00',
+    updatedAt: '2024-09-16T08:30:54+08:00',
+  },
+  {
+    id: 'sample-schedule-analytics-quarterly',
+    name: 'Quarterly Analytics Digest',
+    cadence: 'quarterly',
+    timezone: 'Asia/Manila',
+    nextRun: '2024-12-31T09:00:00+08:00',
+    format: 'pdf',
+    recipients: ['leadership@alu.org', 'strategy@alu.org'],
+    active: true,
+    lastRun: '2024-06-30T09:03:10+08:00',
+    lastRunStatus: 'success',
+    createdAt: '2023-12-29T09:00:00+08:00',
+    updatedAt: '2024-06-30T09:03:10+08:00',
+  },
+  {
+    id: 'sample-schedule-compliance-annual',
+    name: 'Annual Compliance Package',
+    cadence: 'annually',
+    timezone: 'Asia/Manila',
+    nextRun: '2024-12-31T10:00:00+08:00',
+    format: 'csv',
+    recipients: ['compliance@alu.org', 'legal.office@alu.org'],
+    active: false,
+    lastRun: '2023-12-31T10:01:28+08:00',
+    lastRunStatus: 'success',
+    createdAt: '2023-01-05T10:00:00+08:00',
+    updatedAt: '2024-03-15T11:12:44+08:00',
+  },
+];
+
+const cloneSchedules = (list = []) => list.map((entry) => ({
+  ...entry,
+  recipients: Array.isArray(entry.recipients)
+    ? entry.recipients.map((recipient) => (typeof recipient === 'string' ? recipient : String(recipient)))
+    : [],
+}));
+
+let scheduleStore = cloneSchedules(SAMPLE_REPORT_SCHEDULES);
+
+const cadenceToKey = (value) => {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value.trim().toLowerCase();
+};
+
+const normalizeRecipients = (input) => {
+  if (!input) {
+    return [];
+  }
+  const values = Array.isArray(input)
+    ? input
+    : String(input)
+        .split(/[,;]+/)
+        .map((value) => value.trim());
+  const normalized = [];
+  const seen = new Set();
+  values.forEach((value) => {
+    if (!value) {
+      return;
+    }
+    const recipient = String(value).trim();
+    if (!recipient) {
+      return;
+    }
+    const key = recipient.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    normalized.push(recipient);
+  });
+  return normalized;
+};
+
+const normalizeNextRun = (value) => {
+  if (value == null || value === '') {
+    return null;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (typeof value === 'number') {
+    const fromNumber = new Date(value);
+    return Number.isNaN(fromNumber.getTime()) ? null : fromNumber.toISOString();
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = new Date(trimmed);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString();
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const midnight = new Date(`${trimmed}T00:00:00`);
+    return Number.isNaN(midnight.getTime()) ? null : midnight.toISOString();
+  }
+  return null;
+};
+
+const getScheduleSnapshot = () => cloneSchedules(scheduleStore);
+
+const applyScheduleUpdates = (id, updates = {}) => {
+  const targetIndex = scheduleStore.findIndex((entry) => entry.id === id);
+  if (targetIndex === -1) {
+    return null;
+  }
+
+  const current = scheduleStore[targetIndex];
+  const next = { ...current };
+
+  if (updates.name !== undefined) {
+    const name = String(updates.name).trim();
+    if (name) {
+      next.name = name;
+    }
+  }
+
+  if (updates.cadence !== undefined) {
+    const cadence = cadenceToKey(updates.cadence);
+    if (cadence) {
+      next.cadence = cadence;
+    }
+  }
+
+  if (updates.timezone !== undefined) {
+    const timezone = String(updates.timezone).trim();
+    if (timezone) {
+      next.timezone = timezone;
+    }
+  }
+
+  if (updates.format !== undefined) {
+    const format = String(updates.format).trim();
+    if (format) {
+      next.format = format;
+    }
+  }
+
+  if (updates.recipients !== undefined) {
+    next.recipients = Array.isArray(updates.recipients)
+      ? updates.recipients.map((recipient) => (typeof recipient === 'string' ? recipient : String(recipient)))
+      : [];
+  }
+
+  if (updates.active !== undefined) {
+    next.active = Boolean(updates.active);
+  }
+
+  if (updates.nextRun !== undefined) {
+    next.nextRun = updates.nextRun;
+  }
+
+  next.updatedAt = new Date().toISOString();
+  scheduleStore[targetIndex] = next;
+  return { ...next, recipients: [...next.recipients] };
+};
+
 const SAMPLE_REPORT_BUILDER = {
   reportTypes: [
     { value: 'membership', label: 'Membership Report' },
@@ -359,6 +550,7 @@ const buildSampleSummaryPayload = (primaryMessage, options = {}) => {
       uptime: SAMPLE_SYSTEM_HEALTH.uptime,
       uptimeMeta: SAMPLE_SYSTEM_HEALTH.uptimeMeta,
     },
+    reportSchedules: getScheduleSnapshot(),
     reportBuilder: { ...SAMPLE_REPORT_BUILDER },
     ai: { ...SAMPLE_AI_METRICS },
     performance: {
@@ -1715,6 +1907,8 @@ const registerReportsRoutes = (router) => {
         ? normalizedReportBuilder
         : { ...SAMPLE_REPORT_BUILDER };
 
+      const reportSchedules = getScheduleSnapshot();
+
       const meta = {
         isSample: false,
         warnings: metaWarnings,
@@ -1775,6 +1969,7 @@ const registerReportsRoutes = (router) => {
         systemHealth: systemHealthSection,
         ai: aiSection,
         reportBuilder: reportBuilderSection,
+        reportSchedules,
         members: {
           total: totalMembers,
           totalAllStatuses,
@@ -1930,6 +2125,67 @@ const registerReportsRoutes = (router) => {
       });
       res.status(200).json(fallbackPayload);
     }
+  });
+
+  router.get('/reports/schedules', (_req, res) => {
+    res.json({ results: getScheduleSnapshot() });
+  });
+
+  router.patch('/reports/schedules/:id', (req, res) => {
+    const scheduleId = typeof req.params.id === 'string' ? req.params.id.trim() : '';
+    if (!scheduleId) {
+      res.status(400).json({ message: 'Schedule id is required' });
+      return;
+    }
+
+    const body = req.body ?? {};
+    const updates = {};
+
+    if (typeof body.name === 'string' && body.name.trim()) {
+      updates.name = body.name.trim();
+    }
+
+    if (typeof body.cadence === 'string' && body.cadence.trim()) {
+      updates.cadence = body.cadence.trim();
+    }
+
+    if (body.nextRun !== undefined) {
+      const normalized = normalizeNextRun(body.nextRun);
+      if (!normalized) {
+        res.status(400).json({ message: 'Invalid nextRun value' });
+        return;
+      }
+      updates.nextRun = normalized;
+    }
+
+    if (typeof body.timezone === 'string' && body.timezone.trim()) {
+      updates.timezone = body.timezone.trim();
+    }
+
+    if (typeof body.format === 'string' && body.format.trim()) {
+      updates.format = body.format.trim();
+    }
+
+    if (Array.isArray(body.recipients) || typeof body.recipients === 'string') {
+      updates.recipients = normalizeRecipients(body.recipients);
+    }
+
+    if (typeof body.active === 'boolean') {
+      updates.active = body.active;
+    }
+
+    if (!Object.keys(updates).length) {
+      res.status(400).json({ message: 'No supported fields to update' });
+      return;
+    }
+
+    const updated = applyScheduleUpdates(scheduleId, updates);
+    if (!updated) {
+      res.status(404).json({ message: 'Schedule not found' });
+      return;
+    }
+
+    res.json({ schedule: updated });
   });
 
   router.get('/reports/membership-export', async (req, res) => {
