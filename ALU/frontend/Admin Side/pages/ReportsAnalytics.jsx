@@ -28,6 +28,44 @@ const tabs = [
 const exportHistory = [];
 const scheduledReports = [];
 
+const DEFAULT_REPORT_BUILDER_OPTIONS = {
+  reportTypes: [
+    { value: "membership", label: "Membership Report" },
+    { value: "financial", label: "Financial Report" },
+    { value: "events", label: "Event Attendance" },
+    { value: "benefits", label: "Benefits & Attendance" },
+    { value: "ai-analytics", label: "AI Analytics Report" },
+    { value: "ai-audit", label: "AI Audit Trial" },
+  ],
+  dateRanges: [
+    { value: "week", label: "Last 7 days" },
+    { value: "month", label: "Last 30 days" },
+    { value: "quarter", label: "Last 3 months" },
+    { value: "year", label: "Last 12 months" },
+  ],
+  filters: [
+    { value: "company", label: "By company" },
+    { value: "union", label: "By union position" },
+    { value: "status", label: "By status" },
+    { value: "region", label: "By region" },
+  ],
+  formats: [
+    { value: "pdf", label: "PDF report" },
+    { value: "excel", label: "Excel spreadsheet" },
+    { value: "csv", label: "CSV file" },
+    { value: "dashboard", label: "Interactive dashboard" },
+  ],
+};
+
+const REPORT_BUILDER_OPTION_MAP = {
+  reportType: "reportTypes",
+  dateRange: "dateRanges",
+  primaryFilter: "filters",
+  format: "formats",
+};
+
+const REPORT_BUILDER_OPTION_ENTRIES = Object.entries(REPORT_BUILDER_OPTION_MAP);
+
 const formatPesoCompact = (value) => {
   if (!Number.isFinite(value)) {
     return '₱0';
@@ -77,6 +115,12 @@ export default function ReportsAnalytics() {
   const [growthHoverIndex, setGrowthHoverIndex] = useState(null);
   const [distributionHoverIndex, setDistributionHoverIndex] = useState(null);
   const [collectionHoverIndex, setCollectionHoverIndex] = useState(null);
+  const [reportBuilderSelections, setReportBuilderSelections] = useState(() => ({
+    reportType: DEFAULT_REPORT_BUILDER_OPTIONS.reportTypes[0]?.value ?? "",
+    dateRange: DEFAULT_REPORT_BUILDER_OPTIONS.dateRanges[0]?.value ?? "",
+    primaryFilter: DEFAULT_REPORT_BUILDER_OPTIONS.filters[0]?.value ?? "",
+    format: DEFAULT_REPORT_BUILDER_OPTIONS.formats[0]?.value ?? "",
+  }));
 
   const rangeShortLabels = {
     "7d": "Last 7 days",
@@ -231,6 +275,100 @@ export default function ReportsAnalytics() {
       });
   }, [summary]);
 
+  const reportBuilderOptions = useMemo(() => {
+    const builder = summary?.reportBuilder ?? null;
+
+    const slugify = (input) => {
+      if (typeof input !== 'string') {
+        return '';
+      }
+      return input
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    };
+
+    const fromList = (list, fallbackList) => {
+      const collected = [];
+      const seen = new Set();
+
+      const append = (option) => {
+        if (!option) {
+          return;
+        }
+        const label = typeof option.label === 'string' ? option.label.trim() : '';
+        if (!label) {
+          return;
+        }
+        const description = typeof option.description === 'string' ? option.description.trim() : '';
+        const rawValue = typeof option.value === 'string' ? option.value.trim() : '';
+        const value = rawValue || slugify(label) || label;
+        if (!value || seen.has(value)) {
+          return;
+        }
+        seen.add(value);
+        const payload = { value, label };
+        if (description) {
+          payload.description = description;
+        }
+        collected.push(payload);
+      };
+
+      const appendRaw = (value, label, source = {}) => {
+        const descriptor = typeof source.description === 'string' ? source.description : '';
+        const rawLabel = typeof label === 'string' ? label : '';
+        const rawValue = typeof value === 'string' ? value : '';
+        const resolvedLabel = rawLabel.trim() || rawValue.trim();
+        append({ value: rawValue.trim() || resolvedLabel, label: resolvedLabel, description: descriptor });
+      };
+
+      if (Array.isArray(list)) {
+        list.forEach((entry) => {
+          if (!entry) {
+            return;
+          }
+          if (typeof entry === 'string') {
+            appendRaw(entry, entry);
+            return;
+          }
+          if (typeof entry === 'object') {
+            const label = entry.label ?? entry.name ?? entry.title ?? entry.text ?? entry.display ?? entry.value ?? entry.code ?? entry.key;
+            const value = entry.value ?? entry.code ?? entry.key ?? entry.slug ?? entry.id;
+            appendRaw(value, label, entry);
+          }
+        });
+      } else if (list && typeof list === 'object') {
+        Object.entries(list).forEach(([key, value]) => {
+          if (typeof value === 'string') {
+            appendRaw(key, value);
+          }
+        });
+      }
+
+      if (!collected.length && Array.isArray(fallbackList)) {
+        fallbackList.forEach((entry) => {
+          if (!entry) {
+            return;
+          }
+          if (typeof entry === 'string') {
+            appendRaw(entry, entry);
+            return;
+          }
+          appendRaw(entry.value, entry.label, entry);
+        });
+      }
+
+      return collected;
+    };
+
+    return {
+      reportTypes: fromList(builder?.reportTypes, DEFAULT_REPORT_BUILDER_OPTIONS.reportTypes),
+      dateRanges: fromList(builder?.dateRanges, DEFAULT_REPORT_BUILDER_OPTIONS.dateRanges),
+      filters: fromList(builder?.filters, DEFAULT_REPORT_BUILDER_OPTIONS.filters),
+      formats: fromList(builder?.formats, DEFAULT_REPORT_BUILDER_OPTIONS.formats),
+    };
+  }, [summary]);
+
   useEffect(() => {
     if (selectedCompany === 'all') {
       return;
@@ -244,6 +382,80 @@ export default function ReportsAnalytics() {
       setSelectedCompany('all');
     }
   }, [companyOptions, selectedCompany]);
+
+  useEffect(() => {
+    setReportBuilderSelections((previous) => {
+      let mutated = false;
+      const nextSelections = { ...previous };
+
+      REPORT_BUILDER_OPTION_ENTRIES.forEach(([selectionKey, optionKey]) => {
+        const optionsList = reportBuilderOptions[optionKey] ?? [];
+        const currentValue = previous[selectionKey];
+        if (!optionsList.length) {
+          if (currentValue) {
+            nextSelections[selectionKey] = '';
+            mutated = true;
+          }
+          return;
+        }
+        const hasMatch = optionsList.some((option) => option.value === currentValue);
+        if (!hasMatch) {
+          nextSelections[selectionKey] = optionsList[0].value;
+          mutated = true;
+        }
+      });
+
+      return mutated ? nextSelections : previous;
+    });
+  }, [reportBuilderOptions]);
+
+  const reportBuilderSelectionLabels = useMemo(() => {
+    const resolveLabel = (value, options) => {
+      if (!value) {
+        return null;
+      }
+      const match = options.find((option) => option.value === value);
+      return match ? match.label : null;
+    };
+
+    return {
+      reportType: resolveLabel(reportBuilderSelections.reportType, reportBuilderOptions.reportTypes),
+      dateRange: resolveLabel(reportBuilderSelections.dateRange, reportBuilderOptions.dateRanges),
+      primaryFilter: resolveLabel(reportBuilderSelections.primaryFilter, reportBuilderOptions.filters),
+      format: resolveLabel(reportBuilderSelections.format, reportBuilderOptions.formats),
+    };
+  }, [reportBuilderSelections, reportBuilderOptions]);
+
+  const reportBuilderButtonHint = useMemo(() => {
+    const parts = [];
+    if (reportBuilderSelectionLabels.reportType) {
+      parts.push(reportBuilderSelectionLabels.reportType);
+    }
+    if (reportBuilderSelectionLabels.dateRange) {
+      parts.push(reportBuilderSelectionLabels.dateRange);
+    }
+    if (reportBuilderSelectionLabels.primaryFilter) {
+      parts.push(reportBuilderSelectionLabels.primaryFilter);
+    }
+    if (reportBuilderSelectionLabels.format) {
+      parts.push(reportBuilderSelectionLabels.format);
+    }
+    if (!parts.length) {
+      return 'Select report parameters to enable export.';
+    }
+    return parts.join(' • ');
+  }, [reportBuilderSelectionLabels]);
+
+  const canGenerateReport = useMemo(() => (
+    REPORT_BUILDER_OPTION_ENTRIES.every(([selectionKey, optionKey]) => {
+      const optionsList = reportBuilderOptions[optionKey] ?? [];
+      if (!optionsList.length) {
+        return false;
+      }
+      const value = reportBuilderSelections[selectionKey];
+      return typeof value === 'string' && value.trim();
+    })
+  ), [reportBuilderOptions, reportBuilderSelections]);
 
   const newJoinersValue = useMemo(
     () => getJoinersValue(companySnapshot ?? summary?.members, timeRange),
@@ -262,6 +474,22 @@ export default function ReportsAnalytics() {
     const numeric = Number(v);
     const sign = numeric >= 0 ? '' : '-';
     return `${sign}${Math.abs(numeric).toFixed(digits)}%`;
+  };
+
+  const formatHoursPerDay = (value) => {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return '—';
+    }
+    const numeric = Number(value);
+    if (numeric < 0) {
+      return '—';
+    }
+    if (numeric < 1) {
+      const minutes = Math.round(numeric * 60);
+      return `${minutes}m`;
+    }
+    const digits = numeric >= 10 ? 0 : 1;
+    return `${numeric.toFixed(digits)}h`;
   };
 
   const formatStatValue = (value, formatType = 'count') => {
@@ -692,6 +920,19 @@ export default function ReportsAnalytics() {
     if (value === 'all' || companyOptions.includes(value)) {
       setSelectedCompany(value);
     }
+  };
+
+  const handleReportBuilderSelectChange = (event) => {
+    const { name, value } = event.target;
+    if (!name || !(name in REPORT_BUILDER_OPTION_MAP)) {
+      return;
+    }
+    setReportBuilderSelections((previous) => {
+      if (previous[name] === value) {
+        return previous;
+      }
+      return { ...previous, [name]: value };
+    });
   };
 
   const handleMembershipExport = async () => {
@@ -1149,6 +1390,194 @@ export default function ReportsAnalytics() {
     ];
   }, [performanceHighlights.operations, summary]);
 
+  const registrationMetrics = useMemo(() => {
+    const registration = summary?.registration ?? {};
+
+    const toNumber = (value) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : null;
+    };
+
+    const normalizeMeta = (value) => {
+      if (typeof value !== 'string') {
+        return null;
+      }
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+      const match = trimmed.match(/^\((.*)\)$/);
+      return match ? match[1].trim() : trimmed;
+    };
+
+    const avgProcessingDisplay = typeof registration.avgProcessingTime === 'string'
+      ? registration.avgProcessingTime.trim()
+      : registration.avgProcessingTime != null
+        ? `${registration.avgProcessingTime}`
+        : '—';
+
+    const approvalRateValue = toNumber(registration.approvalRate);
+    const pendingReviewsValue = toNumber(registration.pendingReviews);
+    const duplicateDetectionsValue = toNumber(registration.duplicateDetections);
+
+    const approvalTone = approvalRateValue != null
+      ? (approvalRateValue >= 90 ? 'positive' : approvalRateValue >= 75 ? 'warning' : 'negative')
+      : null;
+
+    const pendingTone = pendingReviewsValue != null
+      ? (pendingReviewsValue <= 25 ? 'positive' : pendingReviewsValue <= 60 ? 'warning' : 'negative')
+      : null;
+
+    const duplicateTone = duplicateDetectionsValue != null
+      ? (duplicateDetectionsValue <= 5 ? 'positive' : duplicateDetectionsValue <= 10 ? 'warning' : 'negative')
+      : null;
+
+    return [
+      {
+        id: 'avg-processing',
+        label: 'Avg. Processing Time',
+        value: avgProcessingDisplay || '—',
+        tone: null,
+        meta: normalizeMeta(registration.avgProcessingMeta),
+      },
+      {
+        id: 'approval-rate',
+        label: 'Approval Rate',
+        value: approvalRateValue != null ? formatPercent(approvalRateValue, 0) : '—',
+        tone: approvalTone,
+        meta: normalizeMeta(registration.approvalRateMeta),
+      },
+      {
+        id: 'pending-reviews',
+        label: 'Pending Reviews',
+        value: pendingReviewsValue != null ? formatCount(pendingReviewsValue) : '—',
+        tone: pendingTone,
+        meta: normalizeMeta(registration.pendingReviewsMeta),
+      },
+      {
+        id: 'duplicate-detections',
+        label: 'Duplicate Detections',
+        value: duplicateDetectionsValue != null ? formatCount(duplicateDetectionsValue) : '—',
+        tone: duplicateTone,
+        meta: normalizeMeta(registration.duplicateDetectionsMeta),
+      },
+    ];
+  }, [summary]);
+
+  const systemHealthMetrics = useMemo(() => {
+    const system = summary?.systemHealth ?? {};
+
+    const toNumber = (value) => {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : null;
+    };
+
+    const normalizeMeta = (value) => {
+      if (typeof value !== 'string') {
+        return null;
+      }
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+      const match = trimmed.match(/^\((.*)\)$/);
+      return match ? match[1].trim() : trimmed;
+    };
+
+    const databaseHealthValue = toNumber(system.databaseHealth);
+    const apiResponseValue = toNumber(system.apiResponseTime);
+    const storageUsageValue = toNumber(system.storageUsage);
+    const uptimeValue = toNumber(system.uptime30d ?? system.uptime);
+
+    const responseDisplay = apiResponseValue != null
+      ? `${apiResponseValue.toLocaleString()} ms`
+      : (typeof system.apiResponseTime === 'string' ? system.apiResponseTime : '—');
+
+    const uptimeDigits = uptimeValue != null && Math.abs(uptimeValue) >= 100 ? 0 : 1;
+
+    return [
+      {
+        id: 'database-health',
+        label: 'Database Health',
+        value: databaseHealthValue != null ? formatPercent(databaseHealthValue, 0) : '—',
+        tone: databaseHealthValue != null
+          ? (databaseHealthValue >= 97 ? 'positive' : databaseHealthValue >= 92 ? 'warning' : 'negative')
+          : null,
+        meta: normalizeMeta(system.databaseHealthMeta),
+      },
+      {
+        id: 'api-response',
+        label: 'API Response Time',
+        value: responseDisplay || '—',
+        tone: apiResponseValue != null
+          ? (apiResponseValue <= 200 ? 'positive' : apiResponseValue <= 350 ? 'warning' : 'negative')
+          : null,
+        meta: normalizeMeta(system.apiResponseTimeMeta),
+      },
+      {
+        id: 'storage-usage',
+        label: 'Storage Usage',
+        value: storageUsageValue != null ? formatPercent(storageUsageValue, 0) : '—',
+        tone: storageUsageValue != null
+          ? (storageUsageValue <= 70 ? 'positive' : storageUsageValue <= 85 ? 'warning' : 'negative')
+          : null,
+        meta: normalizeMeta(system.storageUsageMeta),
+      },
+      {
+        id: 'uptime',
+        label: 'Uptime (30d)',
+        value: uptimeValue != null ? formatPercent(uptimeValue, uptimeDigits) : '—',
+        tone: uptimeValue != null
+          ? (uptimeValue >= 99 ? 'positive' : uptimeValue >= 97 ? 'warning' : 'negative')
+          : null,
+        meta: normalizeMeta(system.uptimeMeta ?? system.uptime30dMeta),
+      },
+    ];
+  }, [summary]);
+
+  const aiSummaryCards = useMemo(() => {
+    const ai = summary?.ai ?? {};
+
+    const autoAssignDigits = Math.abs(Number(ai.autoAssignRate ?? 0)) >= 10 ? 0 : 1;
+    const overrideDigits = Math.abs(Number(ai.overrideRate ?? 0)) >= 10 ? 0 : 1;
+    const confidenceDigits = Math.abs(Number(ai.avgConfidence ?? 0)) >= 10 ? 0 : 1;
+
+    return [
+      {
+        id: 'auto-assign-rate',
+        label: 'Auto-assign Rate',
+        value: ai.autoAssignRate != null ? formatPercent(ai.autoAssignRate, autoAssignDigits) : '—',
+        meta: ai.autoAssignRateMeta ?? null,
+        tone: ai.autoAssignRateTone ?? null,
+        accent: 'primary',
+      },
+      {
+        id: 'avg-ai-confidence',
+        label: 'Avg AI Confidence',
+        value: ai.avgConfidence != null ? formatPercent(ai.avgConfidence, confidenceDigits) : '—',
+        meta: ai.avgConfidenceMeta ?? null,
+        tone: ai.avgConfidenceTone ?? null,
+        accent: 'success',
+      },
+      {
+        id: 'override-rate',
+        label: 'Override Rate',
+        value: ai.overrideRate != null ? formatPercent(ai.overrideRate, overrideDigits) : '—',
+        meta: ai.overrideRateMeta ?? null,
+        tone: ai.overrideRateTone ?? null,
+        accent: 'warning',
+      },
+      {
+        id: 'time-saved',
+        label: 'Time Saved/Day',
+        value: ai.timeSavedPerDayHours != null ? formatHoursPerDay(ai.timeSavedPerDayHours) : '—',
+        meta: ai.timeSavedMeta ?? null,
+        tone: ai.timeSavedTone ?? null,
+        accent: 'accent',
+      },
+    ];
+  }, [summary]);
+
   const performanceSections = [
     {
       id: 'membership',
@@ -1282,14 +1711,6 @@ export default function ReportsAnalytics() {
       },
     ];
   }, [summary]);
-
-
-  const registrationKPIs = [
-    { label: "Avg processing time", value: "2.3 days" },
-    { label: "Approval rate", value: "94%" },
-    { label: "Pending reviews", value: "47" },
-    { label: "Duplicate detections", value: "3 (6.4%)" },
-  ];
 
   return (
     <div className="admin-page admin-stack-xl reports-page">
@@ -2139,56 +2560,59 @@ export default function ReportsAnalytics() {
                 })}
               </section>
 
-              <div className="admin-grid-two">
-                <article className="admin-card admin-stack-md">
-                  <header className="admin-card__heading">
+              <div className="reports-operations-panels">
+                <article className="admin-card reports-operations-panel">
+                  <header className="admin-card__heading reports-operations-panel__header">
                     <ClipboardList size={18} />
                     <div>
                       <h2>Registration processing</h2>
                       <p className="admin-muted">Queue health metrics from the last review cycle.</p>
                     </div>
                   </header>
-                  <div className="admin-grid-two">
-                    {registrationKPIs.map((entry) => (
-                      <div key={entry.label} className="admin-kpi-tile">
-                        <strong>{entry.value}</strong>
-                        <span>{entry.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="admin-inline-list">
-                    <span>Fast-track approvals: 67%</span>
-                    <span>Manual escalations: 9 cases</span>
-                    <span>Consent follow-ups: 14 pending</span>
-                  </div>
+                  {registrationMetrics.length ? (
+                    <div className="reports-operations-panel__metrics">
+                      {registrationMetrics.map((metric) => (
+                        <div key={metric.id} className="reports-operations-panel__metric">
+                          <span className="reports-operations-panel__metric-label">{metric.label}</span>
+                          <span className={`reports-operations-panel__metric-value${metric.tone ? ` is-${metric.tone}` : ''}`}>
+                            {metric.value}
+                            {metric.meta ? (
+                              <span className="reports-operations-panel__metric-hint">({metric.meta})</span>
+                            ) : null}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="admin-empty-state is-minimal">No registration metrics yet.</div>
+                  )}
                 </article>
 
-                <article className="admin-card admin-stack-md">
-                  <header className="admin-card__heading">
+                <article className="admin-card reports-operations-panel">
+                  <header className="admin-card__heading reports-operations-panel__header">
                     <ShieldCheck size={18} />
                     <div>
                       <h2>System performance</h2>
                       <p className="admin-muted">Platform uptime and service reliability.</p>
                     </div>
                   </header>
-                  <ul className="admin-list-plain">
-                    <li>
-                      <span>Database health</span>
-                      <strong>98%</strong>
-                    </li>
-                    <li>
-                      <span>API response time</span>
-                      <strong>142 ms</strong>
-                    </li>
-                    <li>
-                      <span>Storage usage</span>
-                      <strong>67%</strong>
-                    </li>
-                    <li>
-                      <span>Uptime (30d)</span>
-                      <strong>99.9%</strong>
-                    </li>
-                  </ul>
+                  {systemHealthMetrics.length ? (
+                    <div className="reports-operations-panel__metrics">
+                      {systemHealthMetrics.map((metric) => (
+                        <div key={metric.id} className="reports-operations-panel__metric">
+                          <span className="reports-operations-panel__metric-label">{metric.label}</span>
+                          <span className={`reports-operations-panel__metric-value${metric.tone ? ` is-${metric.tone}` : ''}`}>
+                            {metric.value}
+                            {metric.meta ? (
+                              <span className="reports-operations-panel__metric-hint">({metric.meta})</span>
+                            ) : null}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="admin-empty-state is-minimal">No system health data yet.</div>
+                  )}
                 </article>
               </div>
             </>
@@ -2196,6 +2620,20 @@ export default function ReportsAnalytics() {
 
         {activeTab === "custom" ? (
             <>
+              <section className="reports-ai-summary">
+                {aiSummaryCards.map((card) => (
+                  <article key={card.id} className={`reports-ai-card ${card.accent ? `is-${card.accent}` : ''}`}>
+                    <strong className="reports-ai-card__value">{card.value}</strong>
+                    <span className="reports-ai-card__label">{card.label}</span>
+                    {card.meta ? (
+                      <span className={`reports-ai-card__meta ${card.tone ? `is-${card.tone}` : ''}`}>
+                        {card.meta}
+                      </span>
+                    ) : null}
+                  </article>
+                ))}
+              </section>
+
               <div className="admin-grid-two">
                 <article className="admin-card admin-stack-md">
                   <header className="admin-card__heading">
@@ -2208,44 +2646,107 @@ export default function ReportsAnalytics() {
                   <div className="admin-form-grid">
                     <label className="admin-field">
                       <span>Report type</span>
-                      <select defaultValue="membership">
-                        <option value="membership">Membership report</option>
-                        <option value="financial">Financial summary</option>
-                        <option value="attendance">Event attendance</option>
-                        <option value="assistance">Benefits & assistance</option>
-                        <option value="ai">AI analytics</option>
+                      <select
+                        name="reportType"
+                        value={reportBuilderSelections.reportType}
+                        onChange={handleReportBuilderSelectChange}
+                        disabled={!reportBuilderOptions.reportTypes.length}
+                      >
+                        {reportBuilderOptions.reportTypes.length
+                          ? reportBuilderOptions.reportTypes.map((option) => (
+                              <option
+                                key={option.value}
+                                value={option.value}
+                                title={option.description ?? undefined}
+                              >
+                                {option.label}
+                              </option>
+                            ))
+                          : (
+                            <option value="">No report types available</option>
+                          )}
                       </select>
                     </label>
                     <label className="admin-field">
                       <span>Date range</span>
-                      <select defaultValue="month">
-                        <option value="week">Last 7 days</option>
-                        <option value="month">Last 30 days</option>
-                        <option value="quarter">Last 3 months</option>
-                        <option value="year">Last 12 months</option>
+                      <select
+                        name="dateRange"
+                        value={reportBuilderSelections.dateRange}
+                        onChange={handleReportBuilderSelectChange}
+                        disabled={!reportBuilderOptions.dateRanges.length}
+                      >
+                        {reportBuilderOptions.dateRanges.length
+                          ? reportBuilderOptions.dateRanges.map((option) => (
+                              <option
+                                key={option.value}
+                                value={option.value}
+                                title={option.description ?? undefined}
+                              >
+                                {option.label}
+                              </option>
+                            ))
+                          : (
+                            <option value="">No ranges available</option>
+                          )}
                       </select>
                     </label>
                     <label className="admin-field">
                       <span>Primary filter</span>
-                      <select defaultValue="company">
-                        <option value="company">By company</option>
-                        <option value="union">By union position</option>
-                        <option value="status">By status</option>
-                        <option value="region">By region</option>
+                      <select
+                        name="primaryFilter"
+                        value={reportBuilderSelections.primaryFilter}
+                        onChange={handleReportBuilderSelectChange}
+                        disabled={!reportBuilderOptions.filters.length}
+                      >
+                        {reportBuilderOptions.filters.length
+                          ? reportBuilderOptions.filters.map((option) => (
+                              <option
+                                key={option.value}
+                                value={option.value}
+                                title={option.description ?? undefined}
+                              >
+                                {option.label}
+                              </option>
+                            ))
+                          : (
+                            <option value="">No filters available</option>
+                          )}
                       </select>
                     </label>
                     <label className="admin-field">
                       <span>Output format</span>
-                      <select defaultValue="pdf">
-                        <option value="pdf">PDF report</option>
-                        <option value="excel">Excel spreadsheet</option>
-                        <option value="csv">CSV file</option>
-                        <option value="dashboard">Interactive dashboard</option>
+                      <select
+                        name="format"
+                        value={reportBuilderSelections.format}
+                        onChange={handleReportBuilderSelectChange}
+                        disabled={!reportBuilderOptions.formats.length}
+                      >
+                        {reportBuilderOptions.formats.length
+                          ? reportBuilderOptions.formats.map((option) => (
+                              <option
+                                key={option.value}
+                                value={option.value}
+                                title={option.description ?? undefined}
+                              >
+                                {option.label}
+                              </option>
+                            ))
+                          : (
+                            <option value="">No formats available</option>
+                          )}
                       </select>
                     </label>
                   </div>
-                  <button type="button" className="admin-button is-primary admin-report-action">
-                    <BarChart3 size={16} /> Generate report
+                  <button
+                    type="button"
+                    className="admin-button is-primary admin-report-action"
+                    disabled={!canGenerateReport}
+                    title={reportBuilderButtonHint}
+                  >
+                    <BarChart3 size={16} />
+                    <span>
+                      {` Generate ${reportBuilderSelectionLabels.reportType ?? 'report'}`}
+                    </span>
                   </button>
                 </article>
 

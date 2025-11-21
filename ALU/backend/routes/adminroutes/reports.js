@@ -131,6 +131,72 @@ const SAMPLE_TOP_COMPANIES = [
   { company: 'Jollibee Foods', collected: 2450000, billed: 2880000, collectionRate: 85.1, members: 1567 },
 ];
 
+const SAMPLE_REGISTRATION_METRICS = {
+  avgProcessingTime: '2.3 days',
+  avgProcessingMeta: 'Based on 312 decisions',
+  approvalRate: 94,
+  approvalRateMeta: '312 decisions',
+  pendingReviews: 47,
+  pendingReviewsMeta: 'Pending + under review',
+  duplicateDetections: 3,
+  duplicateDetectionsMeta: '6.4% flagged',
+};
+
+const SAMPLE_SYSTEM_HEALTH = {
+  databaseHealth: 98,
+  databaseHealthMeta: 'All core tables responsive',
+  apiResponseTime: 142,
+  apiResponseTimeMeta: '9.1 q/s throughput',
+  storageUsage: 67,
+  storageUsageMeta: '432 MB used',
+  uptime: 99.9,
+  uptimeMeta: '31-day rolling uptime',
+};
+
+const SAMPLE_AI_METRICS = {
+  autoAssignRate: 67,
+  autoAssignRateMeta: '+12% vs last month',
+  autoAssignRateTone: 'positive',
+  avgConfidence: 84,
+  avgConfidenceMeta: '+3% vs last month',
+  avgConfidenceTone: 'positive',
+  overrideRate: 15,
+  overrideRateMeta: '-5% vs last month',
+  overrideRateTone: 'positive',
+  timeSavedPerDayHours: 2.3,
+  timeSavedMeta: 'AI automation',
+  timeSavedTone: 'positive',
+};
+
+const SAMPLE_REPORT_BUILDER = {
+  reportTypes: [
+    { value: 'membership', label: 'Membership Report' },
+    { value: 'financial', label: 'Financial Report' },
+    { value: 'events', label: 'Event Attendance' },
+    { value: 'benefits', label: 'Benefits & Attendance' },
+    { value: 'ai-analytics', label: 'AI Analytics Report' },
+    { value: 'ai-audit', label: 'AI Audit Trial' },
+  ],
+  dateRanges: [
+    { value: '7d', label: 'Last 7 days' },
+    { value: '30d', label: 'Last 30 days' },
+    { value: '90d', label: 'Last 3 months' },
+    { value: '12m', label: 'Last 12 months' },
+  ],
+  filters: [
+    { value: 'company', label: 'By Company' },
+    { value: 'union-position', label: 'By Union Position' },
+    { value: 'status', label: 'By Status' },
+    { value: 'region', label: 'By Region' },
+  ],
+  formats: [
+    { value: 'pdf', label: 'PDF Report' },
+    { value: 'excel', label: 'Excel Spreadsheet' },
+    { value: 'csv', label: 'CSV File' },
+    { value: 'dashboard', label: 'Interactive Dashboard' },
+  ],
+};
+
 const buildSampleSummaryPayload = (primaryMessage, options = {}) => {
   const {
     type = 'warning',
@@ -273,6 +339,28 @@ const buildSampleSummaryPayload = (primaryMessage, options = {}) => {
       overdueEntries: 2120,
       overdueMembers: 1832,
     },
+    registration: {
+      avgProcessingTime: SAMPLE_REGISTRATION_METRICS.avgProcessingTime,
+      avgProcessingMeta: SAMPLE_REGISTRATION_METRICS.avgProcessingMeta,
+      approvalRate: SAMPLE_REGISTRATION_METRICS.approvalRate,
+      approvalRateMeta: SAMPLE_REGISTRATION_METRICS.approvalRateMeta,
+      pendingReviews: SAMPLE_REGISTRATION_METRICS.pendingReviews,
+      pendingReviewsMeta: SAMPLE_REGISTRATION_METRICS.pendingReviewsMeta,
+      duplicateDetections: SAMPLE_REGISTRATION_METRICS.duplicateDetections,
+      duplicateDetectionsMeta: SAMPLE_REGISTRATION_METRICS.duplicateDetectionsMeta,
+    },
+    systemHealth: {
+      databaseHealth: SAMPLE_SYSTEM_HEALTH.databaseHealth,
+      databaseHealthMeta: SAMPLE_SYSTEM_HEALTH.databaseHealthMeta,
+      apiResponseTime: SAMPLE_SYSTEM_HEALTH.apiResponseTime,
+      apiResponseTimeMeta: SAMPLE_SYSTEM_HEALTH.apiResponseTimeMeta,
+      storageUsage: SAMPLE_SYSTEM_HEALTH.storageUsage,
+      storageUsageMeta: SAMPLE_SYSTEM_HEALTH.storageUsageMeta,
+      uptime: SAMPLE_SYSTEM_HEALTH.uptime,
+      uptimeMeta: SAMPLE_SYSTEM_HEALTH.uptimeMeta,
+    },
+    reportBuilder: { ...SAMPLE_REPORT_BUILDER },
+    ai: { ...SAMPLE_AI_METRICS },
     performance: {
       membership: [
         { label: 'Active Members', value: 19803, format: 'count', meta: '94.6% of records active' },
@@ -387,6 +475,91 @@ const EMPTY_MEMBERS_ROW = [{
   newJoiners12m: 0,
   newJoinersPrev30: 0,
 }];
+
+const EMPTY_REGISTRATION_STATS_ROW = [{
+  pendingCount: 0,
+  approvedCount: 0,
+  rejectedCount: 0,
+  totalCount: 0,
+}];
+
+const formatRelativeTime = (input) => {
+  if (!input) {
+    return null;
+  }
+  const timestamp = new Date(input);
+  if (Number.isNaN(timestamp.getTime())) {
+    return null;
+  }
+  const now = new Date();
+  const diffMs = now.getTime() - timestamp.getTime();
+  if (diffMs < 0) {
+    return 'Just now';
+  }
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diffMs < minute) {
+    return 'Updated just now';
+  }
+  if (diffMs < hour) {
+    const minutes = Math.round(diffMs / minute);
+    return `Updated ${minutes} min${minutes === 1 ? '' : 's'} ago`;
+  }
+  if (diffMs < day) {
+    const hours = Math.round(diffMs / hour);
+    return `Updated ${hours} hr${hours === 1 ? '' : 's'} ago`;
+  }
+  const days = Math.round(diffMs / day);
+  if (days < 30) {
+    return `Updated ${days} day${days === 1 ? '' : 's'} ago`;
+  }
+  const months = Math.floor(days / 30);
+  return `Updated ${months} mo${months === 1 ? '' : 's'} ago`;
+};
+
+const normalizeOptionList = (source, fallbackList) => {
+  const results = [];
+  const appendOption = (value, label) => {
+    const trimmedLabel = typeof label === 'string' ? label.trim() : '';
+    if (!trimmedLabel) {
+      return;
+    }
+    const normalizedValue = typeof value === 'string' && value.trim()
+      ? value.trim()
+      : trimmedLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    results.push({ value: normalizedValue, label: trimmedLabel });
+  };
+
+  if (Array.isArray(source)) {
+    source.forEach((item) => {
+      if (item == null) {
+        return;
+      }
+      if (typeof item === 'string') {
+        appendOption(item, item);
+        return;
+      }
+      if (typeof item === 'object') {
+        const label = item.label ?? item.name ?? item.title ?? item.text;
+        const value = item.value ?? item.code ?? item.key ?? label;
+        appendOption(value, label ?? value);
+      }
+    });
+  } else if (source && typeof source === 'object') {
+    Object.entries(source).forEach(([key, label]) => {
+      if (typeof label === 'string' && label.trim()) {
+        appendOption(key, label);
+      }
+    });
+  }
+
+  if (!results.length && Array.isArray(fallbackList)) {
+    return [...fallbackList];
+  }
+
+  return results;
+};
 
 const registerReportsRoutes = (router) => {
   // summary report combining tickets, events, benefits and dues
@@ -1108,20 +1281,439 @@ const registerReportsRoutes = (router) => {
         ? (safeNumber(eventAttendanceRow[0]?.totalAttended) / safeNumber(eventAttendanceRow[0]?.totalRegistrations)) * 100
         : 0;
 
-      const registrationStatsRow = await runQuery(`
-        SELECT
-          SUM(CASE WHEN status IN ('pending', 'under_review') THEN 1 ELSE 0 END) AS pendingCount,
-          SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approvedCount,
-          SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejectedCount,
-          COUNT(*) AS totalCount
-        FROM users;
-      `);
+      const registrationStatsRow = await safeReportQuery(
+        'registration status summary',
+        `
+          SELECT
+            SUM(CASE WHEN status IN ('pending', 'under_review', 'email_verified') THEN 1 ELSE 0 END) AS pendingCount,
+            SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approvedCount,
+            SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejectedCount,
+            COUNT(*) AS totalCount
+          FROM users;
+        `,
+        [],
+        EMPTY_REGISTRATION_STATS_ROW,
+      );
 
-      const pendingReviews = safeNumber(registrationStatsRow[0]?.pendingCount);
-      const approvedCount = safeNumber(registrationStatsRow[0]?.approvedCount);
-      const rejectedCount = safeNumber(registrationStatsRow[0]?.rejectedCount);
+      const registrationProcessingRow = await safeReportQuery(
+        'registration processing durations',
+        `
+          SELECT
+            AVG(TIMESTAMPDIFF(HOUR, rf.submitted_at, decision.decision_at)) AS avgHours,
+            COUNT(*) AS completedDecisions
+          FROM registration_forms rf
+          JOIN (
+            SELECT
+              rr.user_id,
+              MAX(CASE WHEN rr.status IN ('approved', 'rejected') THEN rr.created_at END) AS decision_at
+            FROM registration_reviews rr
+            GROUP BY rr.user_id
+          ) AS decision ON decision.user_id = rf.user_id
+          WHERE decision.decision_at IS NOT NULL
+            AND rf.submitted_at IS NOT NULL;
+        `,
+      );
+
+      const registrationDuplicateRow = await safeReportQuery(
+        'registration duplicate detection',
+        `
+          SELECT
+            IFNULL(SUM(dup_count), 0) AS duplicateRecords,
+            IFNULL(SUM(dup_count) - COUNT(*), 0) AS excessRecords,
+            COUNT(*) AS duplicateGroups
+          FROM (
+            SELECT COUNT(*) AS dup_count
+            FROM users u
+            JOIN user_profiles up ON up.user_id = u.id
+            WHERE u.status IN ('pending', 'under_review', 'email_verified', 'approved')
+            GROUP BY LOWER(TRIM(CONCAT_WS(' ', up.first_name, up.last_name))), up.date_of_birth
+            HAVING COUNT(*) > 1
+          ) AS derived;
+        `,
+      );
+
+      const systemTableHealthRow = await safeReportQuery(
+        'system health table coverage',
+        `
+          SELECT
+            SUM(CASE WHEN total_rows > 0 THEN 1 ELSE 0 END) AS populatedTables,
+            COUNT(*) AS totalTables
+          FROM (
+            SELECT 'users' AS table_name, COUNT(*) AS total_rows FROM users
+            UNION ALL SELECT 'registration_forms', COUNT(*) FROM registration_forms
+            UNION ALL SELECT 'registration_reviews', COUNT(*) FROM registration_reviews
+            UNION ALL SELECT 'dues_ledger', COUNT(*) FROM dues_ledger
+            UNION ALL SELECT 'benefit_requests', COUNT(*) FROM benefit_requests
+            UNION ALL SELECT 'events', COUNT(*) FROM events
+          ) AS tableset;
+        `,
+      );
+
+      const systemStorageRow = await safeReportQuery(
+        'system health storage usage',
+        `
+          SELECT
+            ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS usedMb
+          FROM information_schema.tables
+          WHERE table_schema = DATABASE();
+        `,
+      );
+
+      const systemStatusRows = await safeReportQuery(
+        'system health status',
+        `SHOW GLOBAL STATUS WHERE Variable_name IN ('Questions', 'Uptime')`);
+
+      const aiMetricsRows = await safeReportQuery(
+        'ai metrics summary',
+        `
+          SELECT setting_value, updated_at
+          FROM system_settings
+          WHERE category = 'ai' AND setting_key = 'metrics'
+          ORDER BY updated_at DESC
+          LIMIT 1;
+        `,
+      );
+
+      const aiMetricsRaw = (() => {
+        const row = aiMetricsRows[0];
+        if (!row || row.setting_value == null) {
+          return {};
+        }
+        if (typeof row.setting_value === 'object' && row.setting_value !== null) {
+          return row.setting_value;
+        }
+        try {
+          return JSON.parse(row.setting_value);
+        } catch (error) {
+          logQueryWarning('ai metrics parse', error);
+          return {};
+        }
+      })();
+
+      const aiMetricsUpdatedAt = aiMetricsRows[0]?.updated_at ?? aiMetricsRows[0]?.updatedAt;
+
+      const reportBuilderSettingsRows = await safeReportQuery(
+        'report builder settings',
+        `
+          SELECT setting_key, setting_value
+          FROM system_settings
+          WHERE category = 'reports'
+            AND setting_key IN ('reportTypes', 'dateRanges', 'filters', 'formats');
+        `,
+      );
+
+      const reportBuilderRaw = reportBuilderSettingsRows.reduce((accumulator, row) => {
+        if (!row) {
+          return accumulator;
+        }
+        const key = row.setting_key ?? row.settingKey;
+        if (!key) {
+          return accumulator;
+        }
+        let parsed = row.setting_value ?? row.settingValue;
+        if (typeof parsed === 'string') {
+          try {
+            parsed = JSON.parse(parsed);
+          } catch (error) {
+            logQueryWarning(`report builder setting parse (${key})`, error);
+          }
+        }
+        accumulator[key] = parsed;
+        return accumulator;
+      }, {});
+
+      const pendingReviews = safeNumber(registrationStatsRow[0]?.pendingCount, 0);
+      const approvedCount = safeNumber(registrationStatsRow[0]?.approvedCount, 0);
+      const rejectedCount = safeNumber(registrationStatsRow[0]?.rejectedCount, 0);
+      const totalRegistrationsTracked = safeNumber(registrationStatsRow[0]?.totalCount, 0);
       const totalDecided = approvedCount + rejectedCount;
-      const approvalRate = totalDecided > 0 ? (approvedCount / totalDecided) * 100 : 0;
+      const approvalRateRaw = totalDecided > 0 ? (approvedCount / totalDecided) * 100 : null;
+
+      const avgProcessingHours = safeNumber(registrationProcessingRow[0]?.avgHours, null);
+      const completedDecisions = safeNumber(registrationProcessingRow[0]?.completedDecisions, 0);
+
+      const duplicateDetectionsRaw = Math.max(0, safeNumber(registrationDuplicateRow[0]?.excessRecords, 0));
+      const duplicateGroups = safeNumber(registrationDuplicateRow[0]?.duplicateGroups, 0);
+
+      const populatedTables = safeNumber(systemTableHealthRow[0]?.populatedTables, null);
+      const totalTrackedTables = safeNumber(systemTableHealthRow[0]?.totalTables, null);
+      const storageUsedMb = safeNumber(systemStorageRow[0]?.usedMb, null);
+
+      const statusMap = systemStatusRows.reduce((accumulator, row) => {
+        const key = (row.Variable_name || row.VariableName || row.variable_name || '').toLowerCase();
+        if (!key) {
+          return accumulator;
+        }
+        const valueCandidate = Number(row.Value ?? row.value ?? row.VARIABLE_VALUE ?? row.variable_value);
+        if (Number.isFinite(valueCandidate)) {
+          accumulator[key] = valueCandidate;
+        }
+        return accumulator;
+      }, {});
+
+      const uptimeSeconds = Number.isFinite(statusMap.uptime) ? statusMap.uptime : null;
+      const questionsCount = Number.isFinite(statusMap.questions) ? statusMap.questions : null;
+      const queriesPerSecond = uptimeSeconds && uptimeSeconds > 0 && questionsCount != null
+        ? questionsCount / uptimeSeconds
+        : null;
+
+      const formatDurationLabel = (hoursValue) => {
+        if (!Number.isFinite(hoursValue) || hoursValue <= 0) {
+          return null;
+        }
+        const totalMinutes = hoursValue * 60;
+        if (totalMinutes >= 1440) {
+          const daysRaw = totalMinutes / 1440;
+          const digits = daysRaw >= 10 ? 0 : 1;
+          const daysValue = Number(daysRaw.toFixed(digits));
+          return `${daysValue} day${daysValue === 1 ? '' : 's'}`;
+        }
+        if (totalMinutes >= 120) {
+          const hoursRaw = totalMinutes / 60;
+          const digits = hoursRaw >= 10 ? 0 : 1;
+          const hoursValueRounded = Number(hoursRaw.toFixed(digits));
+          return `${hoursValueRounded} hr${hoursValueRounded === 1 ? '' : 's'}`;
+        }
+        const roundedMinutes = Math.max(1, Math.round(totalMinutes));
+        return `${roundedMinutes} min${roundedMinutes === 1 ? '' : 's'}`;
+      };
+
+      const formatUptimeLabel = (secondsValue) => {
+        if (!Number.isFinite(secondsValue) || secondsValue <= 0) {
+          return null;
+        }
+        const days = Math.floor(secondsValue / 86400);
+        const hours = Math.floor((secondsValue % 86400) / 3600);
+        const minutes = Math.floor((secondsValue % 3600) / 60);
+        if (days >= 7) {
+          const weeks = Math.floor(days / 7);
+          const remainingDays = days % 7;
+          return `${weeks}w${remainingDays ? ` ${remainingDays}d` : ''} uptime`;
+        }
+        if (days >= 1) {
+          return `${days}d ${hours}h uptime`;
+        }
+        if (hours >= 1) {
+          return `${hours}h ${minutes}m uptime`;
+        }
+        return `${Math.max(1, Math.floor(secondsValue / 60))}m uptime`;
+      };
+
+      const approvalRate = approvalRateRaw != null ? Number(approvalRateRaw.toFixed(1)) : null;
+      const avgProcessingTime = formatDurationLabel(avgProcessingHours);
+      const avgProcessingMeta = avgProcessingTime && completedDecisions > 0
+        ? `${completedDecisions.toLocaleString()} decisions`
+        : completedDecisions > 0
+          ? `${completedDecisions.toLocaleString()} decisions`
+          : null;
+
+      const duplicatePercent = duplicateDetectionsRaw > 0 && totalRegistrationsTracked > 0
+        ? (duplicateDetectionsRaw / totalRegistrationsTracked) * 100
+        : null;
+      const duplicateMeta = duplicateDetectionsRaw > 0 && duplicatePercent != null
+        ? `${duplicatePercent.toFixed(1)}% flagged`
+        : (duplicateGroups === 0 && totalRegistrationsTracked > 0)
+          ? 'No duplicates detected'
+          : null;
+
+      const databaseHealthValue = totalTrackedTables && totalTrackedTables > 0
+        ? (populatedTables / totalTrackedTables) * 100
+        : null;
+      const databaseHealthMeta = Number.isFinite(populatedTables) && Number.isFinite(totalTrackedTables) && totalTrackedTables > 0
+        ? `${populatedTables}/${totalTrackedTables} core tables with data`
+        : null;
+
+      const assumedCapacityMb = 2048;
+      const storageUsageValue = Number.isFinite(storageUsedMb)
+        ? Math.min(99.9, (storageUsedMb / assumedCapacityMb) * 100)
+        : null;
+      const storageUsageMeta = Number.isFinite(storageUsedMb)
+        ? `${storageUsedMb.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB used`
+        : null;
+
+      const apiResponseTimeValue = queriesPerSecond && queriesPerSecond > 0
+        ? Math.round(Math.min(800, Math.max(40, (1 / queriesPerSecond) * 1000)))
+        : null;
+      const apiResponseTimeMeta = queriesPerSecond && queriesPerSecond > 0
+        ? `${queriesPerSecond >= 10 ? queriesPerSecond.toFixed(0) : queriesPerSecond.toFixed(1)} q/s`
+        : null;
+
+      const uptimePercentValue = uptimeSeconds && uptimeSeconds > 0
+        ? Math.min(99.9, (uptimeSeconds / (30 * 24 * 60 * 60)) * 100)
+        : null;
+      const uptimeMeta = formatUptimeLabel(uptimeSeconds);
+
+      const normalizePercent = (value) => {
+        if (value == null) {
+          return null;
+        }
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          return null;
+        }
+        if (Math.abs(numeric) <= 1) {
+          return numeric * 100;
+        }
+        return numeric;
+      };
+
+      const autoAssignRateValue = normalizePercent(aiMetricsRaw.autoAssignRate ?? aiMetricsRaw.auto_assign_rate);
+      const autoAssignTrendValue = normalizePercent(aiMetricsRaw.autoAssignTrend);
+      const autoAssignMetaExplicit = typeof aiMetricsRaw.autoAssignRateMeta === 'string' ? aiMetricsRaw.autoAssignRateMeta.trim() : null;
+
+      const avgConfidencePercentValue = normalizePercent(
+        aiMetricsRaw.avgConfidencePercent ?? aiMetricsRaw.avgConfidence ?? aiMetricsRaw.averageConfidence,
+      );
+      const avgConfidenceTrendValue = normalizePercent(aiMetricsRaw.avgConfidenceTrend ?? aiMetricsRaw.confidenceTrend);
+      const avgConfidenceMetaExplicit = typeof aiMetricsRaw.avgConfidenceMeta === 'string' ? aiMetricsRaw.avgConfidenceMeta.trim() : null;
+
+      const overrideRateValue = normalizePercent(aiMetricsRaw.overrideRate ?? aiMetricsRaw.override_rate);
+      const overrideTrendValueRaw = normalizePercent(aiMetricsRaw.overrideTrend);
+      const overrideMetaExplicit = typeof aiMetricsRaw.overrideRateMeta === 'string' ? aiMetricsRaw.overrideRateMeta.trim() : null;
+
+      const timeSavedHoursValue = (() => {
+        const explicitHours = aiMetricsRaw.timeSavedPerDayHours ?? aiMetricsRaw.timeSavedHours;
+        if (explicitHours != null && Number.isFinite(Number(explicitHours))) {
+          return Number(explicitHours);
+        }
+        if (aiMetricsRaw.timeSavedMinutes != null && Number.isFinite(Number(aiMetricsRaw.timeSavedMinutes))) {
+          return Number(aiMetricsRaw.timeSavedMinutes) / 60;
+        }
+        if (aiMetricsRaw.timeSavedPerDayMinutes != null && Number.isFinite(Number(aiMetricsRaw.timeSavedPerDayMinutes))) {
+          return Number(aiMetricsRaw.timeSavedPerDayMinutes) / 60;
+        }
+        if (aiMetricsRaw.timeSaved != null && Number.isFinite(Number(aiMetricsRaw.timeSaved))) {
+          const candidate = Number(aiMetricsRaw.timeSaved);
+          return candidate > 24 ? candidate / 60 : candidate;
+        }
+        return null;
+      })();
+
+      const timeSavedTrendValue = normalizePercent(aiMetricsRaw.timeSavedTrend);
+      const timeSavedMetaExplicit = typeof aiMetricsRaw.timeSavedMeta === 'string' ? aiMetricsRaw.timeSavedMeta.trim() : null;
+
+      const lastUpdatedLabel = formatRelativeTime(aiMetricsUpdatedAt);
+
+      const formatTrendMeta = (value, explicitMeta) => {
+        if (explicitMeta) {
+          return explicitMeta;
+        }
+        if (Number.isFinite(value)) {
+          const digits = Math.abs(value) >= 10 ? 0 : 1;
+          const sign = value >= 0 ? '+' : '-';
+          return `${sign}${Math.abs(value).toFixed(digits)}% vs last period`;
+        }
+        return lastUpdatedLabel;
+      };
+
+      const autoAssignMeta = formatTrendMeta(autoAssignTrendValue, autoAssignMetaExplicit);
+      const avgConfidenceMeta = formatTrendMeta(avgConfidenceTrendValue, avgConfidenceMetaExplicit);
+
+      const overrideMeta = (() => {
+        if (overrideMetaExplicit) {
+          return overrideMetaExplicit;
+        }
+        if (Number.isFinite(overrideTrendValueRaw)) {
+          const digits = Math.abs(overrideTrendValueRaw) >= 10 ? 0 : 1;
+          const sign = overrideTrendValueRaw >= 0 ? '+' : '-';
+          return `${sign}${Math.abs(overrideTrendValueRaw).toFixed(digits)}% vs last period`;
+        }
+        return lastUpdatedLabel;
+      })();
+
+      const timeSavedMeta = timeSavedMetaExplicit ?? (Number.isFinite(timeSavedTrendValue)
+        ? formatTrendMeta(timeSavedTrendValue, null)
+        : (timeSavedHoursValue != null ? 'Per admin day' : lastUpdatedLabel));
+
+      const autoAssignTone = (() => {
+        if (typeof aiMetricsRaw.autoAssignRateTone === 'string') {
+          return aiMetricsRaw.autoAssignRateTone;
+        }
+        if (Number.isFinite(autoAssignTrendValue)) {
+          return autoAssignTrendValue >= 0 ? 'positive' : 'negative';
+        }
+        return null;
+      })();
+
+      const avgConfidenceTone = (() => {
+        if (typeof aiMetricsRaw.avgConfidenceTone === 'string') {
+          return aiMetricsRaw.avgConfidenceTone;
+        }
+        if (Number.isFinite(avgConfidenceTrendValue)) {
+          return avgConfidenceTrendValue >= 0 ? 'positive' : 'negative';
+        }
+        return null;
+      })();
+
+      const overrideTone = (() => {
+        if (typeof aiMetricsRaw.overrideRateTone === 'string') {
+          return aiMetricsRaw.overrideRateTone;
+        }
+        if (Number.isFinite(overrideTrendValueRaw)) {
+          return overrideTrendValueRaw <= 0 ? 'positive' : 'negative';
+        }
+        return null;
+      })();
+
+      const timeSavedTone = (() => {
+        if (typeof aiMetricsRaw.timeSavedTone === 'string') {
+          return aiMetricsRaw.timeSavedTone;
+        }
+        if (Number.isFinite(timeSavedTrendValue)) {
+          return timeSavedTrendValue >= 0 ? 'positive' : 'negative';
+        }
+        if (timeSavedHoursValue != null) {
+          return timeSavedHoursValue > 0 ? 'positive' : 'neutral';
+        }
+        return null;
+      })();
+
+      const aiSectionHasRecords = [
+        autoAssignRateValue,
+        avgConfidencePercentValue,
+        overrideRateValue,
+        timeSavedHoursValue,
+      ].some((value) => Number.isFinite(value) && value !== null);
+
+      const aiSection = aiSectionHasRecords
+        ? {
+            autoAssignRate: Number.isFinite(autoAssignRateValue) ? Number(autoAssignRateValue.toFixed(1)) : null,
+            autoAssignRateMeta: autoAssignMeta,
+            autoAssignRateTone: autoAssignTone,
+            avgConfidence: Number.isFinite(avgConfidencePercentValue) ? Number(avgConfidencePercentValue.toFixed(1)) : null,
+            avgConfidenceMeta,
+            avgConfidenceTone,
+            overrideRate: Number.isFinite(overrideRateValue) ? Number(overrideRateValue.toFixed(1)) : null,
+            overrideRateMeta: overrideMeta,
+            overrideRateTone: overrideTone,
+            timeSavedPerDayHours: Number.isFinite(timeSavedHoursValue) ? Number(timeSavedHoursValue.toFixed(2)) : null,
+            timeSavedMeta,
+            timeSavedTone,
+          }
+        : { ...SAMPLE_AI_METRICS };
+
+      const normalizedReportBuilder = {
+        reportTypes: normalizeOptionList(reportBuilderRaw.reportTypes, SAMPLE_REPORT_BUILDER.reportTypes),
+        dateRanges: normalizeOptionList(reportBuilderRaw.dateRanges, SAMPLE_REPORT_BUILDER.dateRanges),
+        filters: normalizeOptionList(reportBuilderRaw.filters, SAMPLE_REPORT_BUILDER.filters),
+        formats: normalizeOptionList(reportBuilderRaw.formats, SAMPLE_REPORT_BUILDER.formats),
+      };
+
+      const reportBuilderHasRecords = reportBuilderSettingsRows.length > 0
+        && (
+          (Array.isArray(reportBuilderRaw.reportTypes) && reportBuilderRaw.reportTypes.length)
+          || (Array.isArray(reportBuilderRaw.dateRanges) && reportBuilderRaw.dateRanges.length)
+          || (Array.isArray(reportBuilderRaw.filters) && reportBuilderRaw.filters.length)
+          || (Array.isArray(reportBuilderRaw.formats) && reportBuilderRaw.formats.length)
+          || (reportBuilderRaw.reportTypes && typeof reportBuilderRaw.reportTypes === 'object')
+          || (reportBuilderRaw.dateRanges && typeof reportBuilderRaw.dateRanges === 'object')
+          || (reportBuilderRaw.filters && typeof reportBuilderRaw.filters === 'object')
+          || (reportBuilderRaw.formats && typeof reportBuilderRaw.formats === 'object')
+        );
+
+      const reportBuilderSection = reportBuilderHasRecords
+        ? normalizedReportBuilder
+        : { ...SAMPLE_REPORT_BUILDER };
 
       const meta = {
         isSample: false,
@@ -1134,21 +1726,55 @@ const registerReportsRoutes = (router) => {
         meta.alertMessage = metaWarnings[0];
       }
 
+      const registrationHasRecords = totalRegistrationsTracked > 0 || completedDecisions > 0 || duplicateDetectionsRaw > 0;
+
+      const registrationSection = registrationHasRecords
+        ? {
+            avgProcessingTime: avgProcessingTime ?? null,
+            avgProcessingMeta: avgProcessingMeta,
+            approvalRate,
+            approvalRateMeta: approvalRate != null && totalDecided > 0
+              ? `${totalDecided.toLocaleString()} decisions`
+              : null,
+            pendingReviews,
+            pendingReviewsMeta: Number.isFinite(pendingReviews)
+              ? (pendingReviews > 0 ? 'Pending + under review' : 'No queued registrations')
+              : null,
+            duplicateDetections: duplicateDetectionsRaw,
+            duplicateDetectionsMeta: duplicateMeta,
+          }
+        : { ...SAMPLE_REGISTRATION_METRICS };
+
+      const systemHealthHasData = Number.isFinite(databaseHealthValue)
+        || Number.isFinite(apiResponseTimeValue)
+        || Number.isFinite(storageUsageValue)
+        || Number.isFinite(uptimePercentValue);
+
+      const systemHealthSection = systemHealthHasData
+        ? {
+            databaseHealth: Number.isFinite(databaseHealthValue)
+              ? Number(databaseHealthValue.toFixed(databaseHealthValue >= 100 || databaseHealthValue === 0 ? 0 : 1))
+              : null,
+            databaseHealthMeta,
+            apiResponseTime: Number.isFinite(apiResponseTimeValue) ? apiResponseTimeValue : null,
+            apiResponseTimeMeta,
+            storageUsage: Number.isFinite(storageUsageValue)
+              ? Number(storageUsageValue.toFixed(storageUsageValue >= 100 || storageUsageValue === 0 ? 0 : 1))
+              : null,
+            storageUsageMeta,
+            uptime: Number.isFinite(uptimePercentValue)
+              ? Number(uptimePercentValue.toFixed(uptimePercentValue >= 100 || uptimePercentValue === 0 ? 0 : 1))
+              : null,
+            uptimeMeta,
+          }
+        : { ...SAMPLE_SYSTEM_HEALTH };
+
       const payload = {
         meta,
-        registration: {
-          avgProcessingTime: "2.3 days",
-          approvalRate,
-          pendingReviews,
-          duplicateDetections: 3,
-          duplicateDetectionsMeta: "(6.4%)"
-        },
-        systemHealth: {
-          databaseHealth: 98,
-          apiResponseTime: 142,
-          storageUsage: 67,
-          uptime: 99.9
-        },
+        registration: registrationSection,
+        systemHealth: systemHealthSection,
+        ai: aiSection,
+        reportBuilder: reportBuilderSection,
         members: {
           total: totalMembers,
           totalAllStatuses,
@@ -1284,6 +1910,10 @@ const registerReportsRoutes = (router) => {
         || (payload.events.total ?? 0) > 0
         || (payload.benefits.totalRequests ?? 0) > 0
         || (payload.dues.entries ?? 0) > 0
+        || registrationHasRecords
+        || systemHealthHasData
+        || aiSectionHasRecords
+        || reportBuilderHasRecords
       );
 
       if (!hasRealData) {
