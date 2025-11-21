@@ -413,14 +413,15 @@ export default function EventManagement() {
 				};
 			});
 
-			setEvents(enriched);
+			const normalizedEvents = isSamplePayload ? [] : enriched;
+			setEvents(normalizedEvents);
 			setMeta({
-				total: Number.isFinite(Number(fetchedMeta.total))
+				total: Number.isFinite(Number(fetchedMeta.total)) && !isSamplePayload
 					? Number(fetchedMeta.total)
-					: enriched.length,
+					: normalizedEvents.length,
 				page: fetchedMeta.page ?? 1,
 				pageSize: fetchedMeta.pageSize ?? 50,
-				isSample: Boolean(fetchedMeta.isSample),
+				isSample: Boolean(fetchedMeta.isSample) && !isSamplePayload,
 			});
 			setAttendanceStats(aggregatedAttendance);
 		} catch (err) {
@@ -758,18 +759,6 @@ export default function EventManagement() {
 					</div>
 				) : (
 					<div className="admin-stack">
-						{meta.isSample && !loading ? (
-							<div
-								className="admin-muted"
-								style={{
-									background: "#f1f5f9",
-									borderRadius: "10px",
-									padding: "10px 14px",
-								}}
-							>
-								Showing sample events until a new event is created.
-							</div>
-						) : null}
 						{loading ? (
 							<div className="admin-empty-state">
 								<p>Loading…</p>

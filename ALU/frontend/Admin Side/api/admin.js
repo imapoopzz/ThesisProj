@@ -17,6 +17,11 @@ export const deleteEvent = (id) => client.delete(`/api/admin/events/${id}`);
 
 export const getReportsSummary = () => client.get('/api/admin/reports/summary');
 export const exportTicketsReport = (params) => client.get('/api/admin/reports/tickets', { params });
+export const exportMembershipReport = (params) => client.get('/api/admin/reports/membership-export', {
+  params,
+  responseType: 'blob',
+  headers: { Accept: 'text/csv' },
+});
 
 export default {
   listTickets,
@@ -33,4 +38,5 @@ export default {
   deleteEvent,
   getReportsSummary,
   exportTicketsReport,
+  exportMembershipReport,
 };

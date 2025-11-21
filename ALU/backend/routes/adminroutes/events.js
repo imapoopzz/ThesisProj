@@ -1,9 +1,111 @@
+import fs from 'fs';
+import fsPromises from 'fs/promises';
+import path from 'path';
+import crypto from 'crypto';
+import zlib from 'zlib';
 import { runQuery, withTransaction } from '../../db.js';
 import { computeTimeAgo } from './helpers.js';
 
+const STORAGE_PATH_LIMIT = 255;
+const COMPRESSED_PREFIX = '__deflated__:';
+const FILE_PREFIX = '__file__:';
+const uploadsRoot = path.resolve(process.cwd(), process.env.UPLOAD_DIR ?? 'uploads');
+const longValueStoreDir = path.join(uploadsRoot, '.long');
+const longValueCache = new Map();
+let longDirPrepared = false;
+
+const ensureLongValueDir = async () => {
+  if (longDirPrepared) {
+    return;
+  }
+  try {
+    await fsPromises.mkdir(longValueStoreDir, { recursive: true });
+  } catch (error) {
+    if (error?.code !== 'EEXIST') {
+      console.warn('[events routes] unable to prepare long upload directory', error);
+    }
+  }
+  longDirPrepared = true;
+};
+
+const encodeStorageValue = async (raw) => {
+  if (raw === null || raw === undefined) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  if (trimmed.length <= STORAGE_PATH_LIMIT) {
+    return trimmed;
+  }
+
+  try {
+    const compressed = zlib.deflateSync(trimmed);
+    const base64 = compressed.toString('base64');
+    const encoded = `${COMPRESSED_PREFIX}${base64}`;
+    if (encoded.length <= STORAGE_PATH_LIMIT) {
+      return encoded;
+    }
+  } catch (error) {
+    console.warn('[events routes] unable to compress upload path', error);
+  }
+
+  const hash = crypto.createHash('sha256').update(trimmed).digest('hex');
+  const token = `${FILE_PREFIX}${hash}`;
+
+  try {
+    await ensureLongValueDir();
+    const filePath = path.join(longValueStoreDir, `${hash}.txt`);
+    try {
+      await fsPromises.access(filePath);
+    } catch {
+      await fsPromises.writeFile(filePath, trimmed, 'utf8');
+    }
+    longValueCache.set(hash, trimmed);
+    return token;
+  } catch (error) {
+    console.error('[events routes] unable to persist long upload path', error);
+    return trimmed.slice(0, STORAGE_PATH_LIMIT);
+  }
+};
+
+const decodeStorageValue = (value) => {
+  if (value === null || value === undefined) return null;
+  const candidate = String(value).trim();
+  if (!candidate) return null;
+
+  if (candidate.startsWith(COMPRESSED_PREFIX)) {
+    const payload = candidate.slice(COMPRESSED_PREFIX.length);
+    try {
+      const buffer = Buffer.from(payload, 'base64');
+      return zlib.inflateSync(buffer).toString('utf8');
+    } catch (error) {
+      console.warn('[events routes] unable to inflate upload path', error);
+      return null;
+    }
+  }
+
+  if (candidate.startsWith(FILE_PREFIX)) {
+    const key = candidate.slice(FILE_PREFIX.length);
+    if (!key) return null;
+    if (longValueCache.has(key)) {
+      return longValueCache.get(key);
+    }
+    const filePath = path.join(longValueStoreDir, `${key}.txt`);
+    try {
+      const data = fs.readFileSync(filePath, 'utf8');
+      longValueCache.set(key, data);
+      return data;
+    } catch (error) {
+      console.warn('[events routes] missing stored upload path', error);
+      return null;
+    }
+  }
+
+  return candidate;
+};
+
 const resolvePreviewUrl = (value) => {
-  if (!value) return null;
-  const url = String(value).trim();
+  const resolved = decodeStorageValue(value);
+  if (!resolved) return null;
+  const url = String(resolved).trim();
   if (!url) return null;
   if (/^https?:\/\//i.test(url)) {
     return url;
@@ -300,10 +402,15 @@ const upsertUpload = async (connection, {
     return;
   }
 
+  const storedValue = await encodeStorageValue(value);
+  if (!storedValue) {
+    return;
+  }
+
   await connection.query(
     `INSERT INTO uploads (owner_admin_id, category, original_name, storage_path, mime_type, size_bytes, created_at)
      VALUES (?, ?, ?, ?, ?, NULL, NOW())`,
-    [adminId ?? null, category, slug, value, mimeType],
+    [adminId ?? null, category, slug, storedValue, mimeType],
   );
 };
 
@@ -347,8 +454,8 @@ const mapEventRow = (row) => ({
   createdBy: row.createdBy,
   timeAgo: row.startAt ? computeTimeAgo(row.startAt) : null,
   previewImage: resolvePreviewUrl(row.previewImage),
-  status: row.statusLabel ?? 'Draft',
-  externalLink: row.externalLink ?? null,
+  status: decodeStorageValue(row.statusLabel) ?? 'Draft',
+  externalLink: decodeStorageValue(row.externalLink) ?? null,
 });
 
 const fetchEventById = async (eventId, connection) => {
