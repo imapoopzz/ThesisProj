@@ -102,7 +102,7 @@ export default function IDCardManagement() {
       </section>
 
       <section className="admin-surface admin-stack-md">
-        <div className="admin-row" style={{ gap: "10px" }}>
+        <div className="admin-heading-inline">
           <Printer size={18} />
           <div>
             <h2>Production queue</h2>

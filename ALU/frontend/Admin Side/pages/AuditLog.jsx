@@ -57,13 +57,15 @@ export default function AuditLog() {
       </header>
 
       <section className="admin-surface admin-stack-md">
-        <div className="admin-row" style={{ gap: "8px" }}>
-          <ShieldAlert size={18} />
-          <div>
-            <h2>Recent entries</h2>
+        <header className="admin-row">
+          <div style={{ minWidth: 0 }}>
+            <h2 className="admin-heading-with-icon">
+              <ShieldAlert size={18} aria-hidden="true" />
+              <span>Recent entries</span>
+            </h2>
             <p className="admin-muted">Live audit trail from automation decisions and admin overrides.</p>
           </div>
-        </div>
+        </header>
         {error ? <div className="admin-alert is-error">{error}</div> : null}
         <div>
           {loading && entries.length === 0 ? <div className="admin-empty">Loading audit logs…</div> : null}

@@ -1,11 +1,10 @@
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useOutletContext } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useOutletContext, Link } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import LandingPage from '@userPages/LandingPage.jsx';
 import LoginPage from '@userPages/LoginPage.jsx';
-import QuickRegistrationPage from '@userPages/QuickRegistrationPage.jsx';
-import EmailVerificationPage from '@userPages/EmailVerificationPage.jsx';
+import RegistrationPage from '@userPages/RegistrationPage.jsx';
+import SimpleRegistrationPage from '@userPages/SimpleRegistrationPage.jsx';
 import RegistrationSuccessPage from '@userPages/RegistrationSuccessPage.jsx';
-import PasswordSetupPage from '@userPages/PasswordSetupPage.jsx';
 import DashboardPage from '@userPages/DashboardPage.jsx';
 import DigitalIdPage from '@userPages/DigitalIdPage.jsx';
 import DuesTrackingPage from '@userPages/DuesTrackingPage.jsx';
@@ -13,6 +12,7 @@ import NewsPage from '@userPages/NewsPage.jsx';
 import AccountPage from '@userPages/AccountPage.jsx';
 import BenefitsPage from '@userPages/BenefitsPage.jsx';
 import MembershipFormPage from '@userPages/MembershipFormPage.jsx';
+import RequestAssistancePage from '@userPages/RequestAssistance.jsx';
 import AdminLayout from '@adminComponents/AdminLayout.jsx';
 import AdminDashboard from '@adminPages/Dashboard.jsx';
 import MembersTable from '@adminPages/MembersTable.jsx';
@@ -22,7 +22,6 @@ import AdminFinalApprovalQueue from '@adminPages/AdminFinalApprovalQueue.jsx';
 import TicketDetail from '@adminPages/TicketDetail.jsx';
 import ReportsAnalytics from '@adminPages/ReportsAnalytics.jsx';
 import AuditLog from '@adminPages/AuditLog.jsx';
-import AISettings from '@adminPages/AISettings.jsx';
 import BenefitsAssistance from '@adminPages/BenefitsAssistance.jsx';
 import BenefitsAssistanceTriage from '@adminPages/BenefitsAssistanceTriage.jsx';
 import DuesFinance from '@adminPages/DuesFinance.jsx';
@@ -30,6 +29,8 @@ import EventManagement from '@adminPages/EventManagement.jsx';
 import IDCardManagement from '@adminPages/IDCardManagement.jsx';
 import MemberProfile from '@adminPages/MemberProfile.jsx';
 import AdminSettings from '@adminPages/AdminSettings.jsx';
+import AdminLogin from '@adminPages/Login.jsx';
+import AdminForgotPassword from '@adminPages/ForgotPassword.jsx';
 // (membership application API still available if needed)
 import { mockUser, mockDues, mockNotifications, mockNews } from './data/mockData';
 
@@ -41,10 +42,77 @@ function Protected({ isAuthenticated, children }) {
   return children;
 }
 
+function VerifiedOnly({ user, children }) {
+  // Check if user is approved/active.
+  // We treat 'pending', '0', false, or null as unverified.
+  // Adjust 'active' if your DB uses a different string for approved users.
+  const isVerified = user?.isApproved === 'active' || user?.isApproved === 'approved' || user?.isApproved === true || user?.isApproved === 1 || user?.isApproved === '1';
+
+  if (!isVerified) {
+    return (
+      <div className="verification-prompt" style={{ 
+        padding: '4rem 2rem', 
+        textAlign: 'center', 
+        maxWidth: '600px', 
+        margin: '0 auto',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '1.5rem'
+      }}>
+        <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#1f2937' }}>Verification Required</h2>
+        <p style={{ color: '#4b5563', lineHeight: '1.6' }}>
+          Your membership status is currently pending verification. 
+          Please complete your profile and wait for admin approval to access this feature.
+        </p>
+        <Link 
+          to="/complete-profile" 
+          style={{ 
+            display: 'inline-block',
+            backgroundColor: '#2563eb', 
+            color: 'white', 
+            padding: '0.75rem 1.5rem', 
+            borderRadius: '0.375rem',
+            textDecoration: 'none',
+            fontWeight: '500'
+          }}
+        >
+          Complete Profile
+        </Link>
+        <Link to="/dashboard" style={{ color: '#6b7280', textDecoration: 'underline' }}>
+          Back to Dashboard
+        </Link>
+      </div>
+    );
+  }
+
+  return children;
+}
+
 function AdminDashboardRoute() {
   const outletContext = useOutletContext();
   const onNavigate = outletContext?.onNavigate;
   return <AdminDashboard onNavigate={onNavigate} />;
+}
+
+function ProtectedAdminRoute({ children, requiredRole }) {
+  const adminUserStr = localStorage.getItem('adminUser');
+  if (!adminUserStr) {
+    return <Navigate to="/admin/login" replace />;
+  }
+
+  try {
+    const adminUser = JSON.parse(adminUserStr);
+    if (requiredRole) {
+      const roles = adminUser.roles || [];
+      if (!roles.includes(requiredRole)) {
+        return <Navigate to="/admin/dashboard" replace />;
+      }
+    }
+    return children;
+  } catch (e) {
+    return <Navigate to="/admin/login" replace />;
+  }
 }
 
 function App() {
@@ -85,6 +153,61 @@ function App() {
     />
   );
 
+  const CompleteProfileRoute = () => {
+    const navigate = useNavigate();
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
+
+    // Transform user object to form state structure if needed
+    const initialData = useMemo(() => {
+      if (!user) return null;
+      // Map user fields to form fields if they differ
+      // For now assuming they match mostly, but dateOfBirth needs splitting
+      const dob = user.dateOfBirth ? new Date(user.dateOfBirth) : null;
+      return {
+        ...user,
+        dateOfBirth: dob ? {
+          month: String(dob.getMonth() + 1).padStart(2, '0'),
+          day: String(dob.getDate()).padStart(2, '0'),
+          year: String(dob.getFullYear())
+        } : { month: '', day: '', year: '' },
+        emergencyContact: {
+          name: user.emergencyContactName || '',
+          relationship: user.emergencyContactRelationship || '',
+          phone: user.emergencyContactPhone || '',
+          address: user.emergencyContactAddress || ''
+        }
+      };
+    }, [user]);
+
+    const handleUpdate = async (formData) => {
+      setError('');
+      setLoading(true);
+      try {
+        await updateUserProfile(user.id, formData);
+        // Update local user state
+        setUser(prev => ({ ...prev, ...formData })); // Ideally fetch fresh user data
+        navigate('/dashboard');
+      } catch (err) {
+        setError(err.response?.data?.message || 'Update failed. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    return (
+      <RegistrationPage
+        initialData={initialData}
+        onSubmit={handleUpdate}
+        onBack={() => navigate('/dashboard')}
+        submitting={loading}
+        submitError={error}
+      />
+    );
+  };
+
+  const RequestAssistanceRoute = () => <RequestAssistancePage user={user} onLogout={handleLogout} />;
+
   const LandingRoute = () => {
     const navigate = useNavigate();
     return (
@@ -97,16 +220,25 @@ function App() {
 
   const LoginRoute = () => {
     const navigate = useNavigate();
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
+
     return (
       <LoginPage
-        onSubmit={({ identifier }) => {
-          const nextUser = {
-            ...mockUser,
-            email: identifier.includes('@') ? identifier : mockUser.email,
-            phone: identifier.startsWith('+') ? identifier : mockUser.phone,
-          };
-          setUser(nextUser);
-          navigate('/dashboard');
+        submitError={error}
+        submitting={loading}
+        onSubmit={async ({ identifier, password }) => {
+          setError('');
+          setLoading(true);
+          try {
+            const { data } = await login({ identifier, password });
+            setUser(data.user);
+            navigate('/dashboard');
+          } catch (err) {
+            setError(err.response?.data?.message || 'Login failed. Please try again.');
+          } finally {
+            setLoading(false);
+          }
         }}
         onBack={() => navigate('/')}
         onCreateAccount={() => navigate('/register')}
@@ -114,43 +246,18 @@ function App() {
     );
   };
 
-  // quick registration flow: quick form -> email verification -> password setup
-  const [pendingReg, setPendingReg] = useState(null);
-
   const RegistrationRoute = () => {
     const navigate = useNavigate();
 
-    const handleNext = (data) => {
-      // store pending registration (client-side). In a full implementation you'd send a verification email.
-      setPendingReg(data);
-      navigate('/verify-email');
+    const handleAutoLogin = (user) => {
+      setUser(user);
+      navigate('/dashboard');
     };
 
     return (
-      <QuickRegistrationPage
+      <SimpleRegistrationPage
         onBack={() => navigate('/')}
-        onNext={handleNext}
-      />
-    );
-  };
-
-  const VerifyRoute = () => {
-    const navigate = useNavigate();
-    if (!pendingReg) {
-      navigate('/register');
-      return null;
-    }
-
-    return (
-      <EmailVerificationPage
-        email={pendingReg.email}
-        onBack={() => navigate('/register')}
-        onResend={() => {/* TODO: call API to resend code */}}
-        onVerify={() => {
-          // after verification, set a provisional user (will complete on password setup)
-          setUser((u) => ({ ...(u ?? {}), email: pendingReg.email, firstName: pendingReg.firstName, lastName: pendingReg.lastName }));
-          navigate('/password-setup');
-        }}
+        onAutoLogin={handleAutoLogin}
       />
     );
   };
@@ -170,18 +277,6 @@ function App() {
     );
   };
 
-  const PasswordSetupRoute = () => {
-    const navigate = useNavigate();
-    const email = user?.email ?? mockUser.email;
-    return (
-      <PasswordSetupPage
-        email={email}
-        onSubmit={() => navigate('/dashboard')}
-        onCancel={() => navigate('/login')}
-      />
-    );
-  };
-
   const defaultRoute = useMemo(() => (isAuthenticated ? '/dashboard' : '/'), [isAuthenticated]);
 
   return (
@@ -189,10 +284,8 @@ function App() {
       <Routes>
         <Route path="/" element={<LandingRoute />} />
         <Route path="/login" element={<LoginRoute />} />
-  <Route path="/register" element={<RegistrationRoute />} />
-  <Route path="/verify-email" element={<VerifyRoute />} />
+        <Route path="/register" element={<RegistrationRoute />} />
         <Route path="/registration-success" element={<RegistrationSuccessRoute />} />
-        <Route path="/password-setup" element={<PasswordSetupRoute />} />
         <Route
           path="/dashboard"
           element={(
@@ -249,7 +342,16 @@ function App() {
             </Protected>
           )}
         />
-        <Route path="/admin" element={<AdminLayout />}>
+        <Route path="/admin/login" element={<AdminLogin />} />
+        <Route path="/admin/forgot-password" element={<AdminForgotPassword />} />
+        <Route
+          path="/admin"
+          element={
+            <ProtectedAdminRoute>
+              <AdminLayout />
+            </ProtectedAdminRoute>
+          }
+        >
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<AdminDashboardRoute />} />
           <Route path="members" element={<MembersTable />} />
@@ -260,13 +362,19 @@ function App() {
           <Route path="ticket-detail" element={<TicketDetail />} />
           <Route path="reports-analytics" element={<ReportsAnalytics />} />
           <Route path="audit-log" element={<AuditLog />} />
-          <Route path="ai-settings" element={<AISettings />} />
           <Route path="benefits-assistance" element={<BenefitsAssistance />} />
           <Route path="benefits-triage" element={<BenefitsAssistanceTriage />} />
           <Route path="dues-finance" element={<DuesFinance />} />
           <Route path="event-management" element={<EventManagement />} />
           <Route path="id-card-management" element={<IDCardManagement />} />
-          <Route path="admin-settings" element={<AdminSettings />} />
+          <Route
+            path="admin-settings"
+            element={
+              <ProtectedAdminRoute requiredRole="SUPER_ADMIN">
+                <AdminSettings />
+              </ProtectedAdminRoute>
+            }
+          />
           <Route path="*" element={<Navigate to="dashboard" replace />} />
         </Route>
         <Route path="*" element={<Navigate to={defaultRoute} replace />} />

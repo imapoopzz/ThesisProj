@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import {
   LayoutDashboard,
@@ -6,12 +7,12 @@ import {
   CheckSquare,
   LineChart,
   Settings,
-  Bot,
   FileText,
   ShieldAlert,
   Wallet,
   HeartHandshake,
   CalendarClock,
+  IdCardIcon,
 } from "lucide-react";
 import "../styles/admin-base.css";
 
@@ -20,17 +21,30 @@ const navItems = [
   { id: "members", label: "Members", icon: Users },
   { id: "approvals", label: "Approvals", icon: CheckSquare },
   { id: "dues", label: "Dues & Finance", icon: Wallet },
+  { id: "security", label: "ID Card Management", icon: IdCardIcon },
   { id: "benefits", label: "Benefits Assistance", icon: HeartHandshake },
   { id: "tickets", label: "Tickets", icon: ClipboardList },
   { id: "events", label: "Event Management", icon: CalendarClock },
   { id: "reports", label: "Reports", icon: LineChart },
   { id: "audit", label: "Audit Log", icon: FileText },
-  { id: "ai", label: "AI Settings", icon: Bot },
-  { id: "security", label: "Security", icon: ShieldAlert },
   { id: "settings", label: "Admin Settings", icon: Settings },
 ];
 
 export default function AdminSidebar({ active, onNavigate }) {
+  const [userRoles, setUserRoles] = useState([]);
+
+  useEffect(() => {
+    const storedUser = localStorage.getItem("adminUser");
+    if (storedUser) {
+      try {
+        const user = JSON.parse(storedUser);
+        setUserRoles(user.roles || []);
+      } catch (e) {
+        console.error("Failed to parse admin user", e);
+      }
+    }
+  }, []);
+
   return (
     <aside className="admin-sidebar">
       <div className="admin-sidebar__header">
@@ -39,6 +53,9 @@ export default function AdminSidebar({ active, onNavigate }) {
       </div>
       <nav className="admin-sidebar__nav">
         {navItems.map((item) => {
+          if (item.id === "settings" && !userRoles.includes("SUPER_ADMIN")) {
+            return null;
+          }
           const Icon = item.icon;
           const isActive = item.id === active;
           return (
